@@ -1,0 +1,32 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: deep-explore
+
+ai:
+  model:
+    api-key: ${AI_API_KEY:}
+    base-url: ${AI_BASE_URL:https://api.openai.com/v1}
+    model-name: ${AI_MODEL_NAME:gpt-4.1-mini}
+    temperature: ${AI_TEMPERATURE:0.2}
+    max-completion-tokens: ${AI_MAX_COMPLETION_TOKENS:512}
+    reasoning-effort: ${AI_REASONING_EFFORT:none}
+    deep-max-completion-tokens: ${AI_DEEP_MAX_COMPLETION_TOKENS:2048}
+    deep-reasoning-effort: ${AI_DEEP_REASONING_EFFORT:low}
+    timeout: ${AI_TIMEOUT:60s}
+    log-requests: ${AI_LOG_REQUESTS:false}
+    log-responses: ${AI_LOG_RESPONSES:false}
+  agent:
+    system-prompt: >
+      You are a reliable and helpful AI assistant. Answer in the same language
+      as the user. Answer the question directly, organize multi-part answers
+      clearly, state uncertainty instead of inventing facts, and keep simple
+      questions concise. Use Markdown when it improves readability.
+
+app:
+  conversation:
+    max-messages: ${MAX_CONVERSATION_MESSAGES:20}
+  cors:
+    allowed-origins: ${FRONTEND_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
