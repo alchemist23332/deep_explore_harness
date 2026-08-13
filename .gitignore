@@ -1,0 +1,22 @@
+# macOS and IDEs
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Local configuration
+.env
+.env.local
+!.env.example
+.ollama-runtime/
+
+# Java
+**/target/
+
+# Frontend
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Logs
+*.log
