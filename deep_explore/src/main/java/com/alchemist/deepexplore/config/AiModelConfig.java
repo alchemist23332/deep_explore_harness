@@ -1,5 +1,7 @@
 package com.alchemist.deepexplore.config;
 
+import java.util.Map;
+
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.springframework.context.annotation.Bean;
@@ -12,8 +14,10 @@ public class AiModelConfig {
     StreamingChatModel fastStreamingChatModel(AiModelProperties properties) {
         return buildModel(
                 properties,
+                properties.modelName(),
                 properties.maxCompletionTokens(),
-                properties.reasoningEffort()
+                properties.reasoningEffort(),
+                properties.fastThinking()
         );
     }
 
@@ -21,29 +25,41 @@ public class AiModelConfig {
     StreamingChatModel deepStreamingChatModel(AiModelProperties properties) {
         return buildModel(
                 properties,
+                properties.resolvedDeepModelName(),
                 properties.deepMaxCompletionTokens(),
-                properties.deepReasoningEffort()
+                properties.deepReasoningEffort(),
+                properties.deepThinking()
         );
     }
 
     private StreamingChatModel buildModel(
             AiModelProperties properties,
+            String modelName,
             int maxCompletionTokens,
-            String reasoningEffort
+            String reasoningEffort,
+            String thinking
     ) {
         String apiKey = properties.isConfigured() ? properties.apiKey() : "not-configured";
 
-        return OpenAiStreamingChatModel.builder()
+        OpenAiStreamingChatModel.OpenAiStreamingChatModelBuilder builder = OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(properties.baseUrl())
-                .modelName(properties.modelName())
+                .modelName(modelName)
                 .temperature(properties.temperature())
                 .maxCompletionTokens(maxCompletionTokens)
-                .reasoningEffort(reasoningEffort)
                 .returnThinking(false)
                 .timeout(properties.timeout())
                 .logRequests(properties.logRequests())
-                .logResponses(properties.logResponses())
-                .build();
+                .logResponses(properties.logResponses());
+
+        if (reasoningEffort != null && !reasoningEffort.isBlank()) {
+            builder.reasoningEffort(reasoningEffort);
+        }
+        if (properties.providerType() == AiProvider.DEEPSEEK
+                && thinking != null
+                && !thinking.isBlank()) {
+            builder.customParameters(Map.of("thinking", Map.of("type", thinking)));
+        }
+        return builder.build();
     }
 }

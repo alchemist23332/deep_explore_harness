@@ -40,6 +40,41 @@ export AI_BASE_URL="https://api.openai.com/v1"
 export AI_MODEL_NAME="gpt-4.1-mini"
 ```
 
+### 接入 DeepSeek V4
+
+在 [DeepSeek Platform](https://platform.deepseek.com/api_keys) 创建 API Key 后，
+以根目录 `.env.deepseek.example` 为模板配置根目录 `.env`：
+
+```bash
+cp .env .env.ollama.backup
+cp .env.deepseek.example .env
+```
+
+然后仅编辑 `.env` 的这一行：
+
+```dotenv
+AI_API_KEY=sk-你的真实DeepSeekKey
+```
+
+DeepSeek 配置默认使用：
+
+- `deepseek-v4-flash`：快速模式，关闭思考。
+- `deepseek-v4-pro`：深度模式，开启 `high` 思考强度。
+
+API Key 只应保存在被 Git 忽略的 `.env` 文件、部署平台密钥库或密码管理器中。
+不要写入 `application.yml`、`.env.example`、前端环境变量或提交记录。
+
+验证 API Key 与余额：
+
+```bash
+set -a
+source .env
+set +a
+
+curl https://api.deepseek.com/user/balance \
+  -H "Authorization: Bearer $AI_API_KEY"
+```
+
 本机已安装 Ollama `0.32.6` 和轻量模型 `qwen3.5:0.8b`。仓库根目录的
 `.env` 已配置为：
 
