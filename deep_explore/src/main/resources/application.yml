@@ -7,14 +7,18 @@ spring:
 
 ai:
   model:
+    provider: ${AI_PROVIDER:OPENAI_COMPATIBLE}
     api-key: ${AI_API_KEY:}
     base-url: ${AI_BASE_URL:https://api.openai.com/v1}
     model-name: ${AI_MODEL_NAME:gpt-4.1-mini}
+    deep-model-name: ${AI_DEEP_MODEL_NAME:${AI_MODEL_NAME:gpt-4.1-mini}}
     temperature: ${AI_TEMPERATURE:0.2}
     max-completion-tokens: ${AI_MAX_COMPLETION_TOKENS:512}
     reasoning-effort: ${AI_REASONING_EFFORT:none}
     deep-max-completion-tokens: ${AI_DEEP_MAX_COMPLETION_TOKENS:2048}
     deep-reasoning-effort: ${AI_DEEP_REASONING_EFFORT:low}
+    fast-thinking: ${AI_FAST_THINKING:}
+    deep-thinking: ${AI_DEEP_THINKING:}
     timeout: ${AI_TIMEOUT:60s}
     log-requests: ${AI_LOG_REQUESTS:false}
     log-responses: ${AI_LOG_RESPONSES:false}
