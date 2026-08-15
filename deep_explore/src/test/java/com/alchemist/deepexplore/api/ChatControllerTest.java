@@ -65,4 +65,31 @@ class ChatControllerTest {
         org.assertj.core.api.Assertions.assertThat(command.getValue().mode())
                 .isEqualTo(AgentMode.DEEP);
     }
+
+    @Test
+    void passesMessageIdentityToAgentService() {
+        when(agentService.stream(any())).thenReturn(Flux.just(AgentEvent.done("conversation-1")));
+
+        webTestClient.post()
+                .uri("/api/chat/stream")
+                .bodyValue(new ChatRequest(
+                        "conversation-1",
+                        "follow-up",
+                        AgentMode.FAST,
+                        "user-message-2",
+                        "assistant-message-1",
+                        "assistant-message-2"
+                ))
+                .exchange()
+                .expectStatus().isOk();
+
+        ArgumentCaptor<AgentCommand> command = ArgumentCaptor.forClass(AgentCommand.class);
+        verify(agentService).stream(command.capture());
+        org.assertj.core.api.Assertions.assertThat(command.getValue().userMessageId())
+                .isEqualTo("user-message-2");
+        org.assertj.core.api.Assertions.assertThat(command.getValue().userParentMessageId())
+                .isEqualTo("assistant-message-1");
+        org.assertj.core.api.Assertions.assertThat(command.getValue().assistantMessageId())
+                .isEqualTo("assistant-message-2");
+    }
 }

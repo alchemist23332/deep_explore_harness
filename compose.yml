@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: deep_explore
+      POSTGRES_USER: deep_explore
+      POSTGRES_PASSWORD: deep_explore
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deep_explore -d deep_explore"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - deep-explore-postgres:/var/lib/postgresql/data
+
+volumes:
+  deep-explore-postgres:

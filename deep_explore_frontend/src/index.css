@@ -1,48 +1,144 @@
+@import "tailwindcss";
+
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+}
+
 :root {
+  color-scheme: light;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  color: #1d2736;
-  background: #f4f6f9;
+    "PingFang SC", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --page: #f6f7f9;
+  --sidebar: #fbfcfd;
   --surface: #ffffff;
-  --muted-surface: #f1f4f8;
-  --border: #dfe4eb;
-  --text-strong: #1d2736;
-  --text-muted: #6f7b8b;
-  --accent: #3157d5;
-  --accent-soft: rgba(49, 87, 213, 0.14);
-  --danger: #b42318;
-  --danger-surface: #fff0ee;
+  --surface-raised: #ffffff;
+  --surface-muted: #f0f2f5;
+  --surface-hover: #e9edf2;
+  --text: #17202d;
+  --text-secondary: #536070;
+  --text-muted: #7b8796;
+  --border: #dfe3e8;
+  --border-strong: #cbd2da;
+  --accent: #3157c8;
+  --accent-hover: #2748ac;
+  --accent-soft: #e9eefc;
+  --success: #16845b;
+  --danger: #c0362c;
+  --danger-soft: #fceceb;
+  --shadow-menu: 0 12px 32px rgba(20, 27, 38, 0.14);
+  --background: var(--surface);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-muted);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-muted);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--accent);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #111418;
+  --sidebar: #15191e;
+  --surface: #181d23;
+  --surface-raised: #20262d;
+  --surface-muted: #222931;
+  --surface-hover: #2a323b;
+  --text: #edf1f5;
+  --text-secondary: #b6c0cb;
+  --text-muted: #84909d;
+  --border: #303842;
+  --border-strong: #414b57;
+  --accent: #7897ee;
+  --accent-hover: #90a9f1;
+  --accent-soft: #26345a;
+  --success: #43c38b;
+  --danger: #f1766e;
+  --danger-soft: #3b2526;
+  --shadow-menu: 0 16px 40px rgba(0, 0, 0, 0.38);
 }
 
 * {
   box-sizing: border-box;
 }
 
-html {
+html,
+body,
+#root {
   min-width: 320px;
   min-height: 100%;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(49, 87, 213, 0.08), transparent 32%),
-    #f4f6f9;
-}
-
-body {
-  min-width: 320px;
-  min-height: 100vh;
   margin: 0;
 }
 
+body {
+  min-height: 100dvh;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--page);
+}
+
 button,
+input,
 textarea {
   font: inherit;
+  letter-spacing: 0;
+}
+
+button {
+  color: inherit;
 }
 
 button:focus-visible,
-textarea:focus-visible {
+input:focus-visible,
+textarea:not(.composer-input):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+::selection {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

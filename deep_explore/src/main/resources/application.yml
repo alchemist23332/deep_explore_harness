@@ -4,6 +4,15 @@ server:
 spring:
   application:
     name: deep-explore
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/deep_explore}
+    username: ${DB_USERNAME:deep_explore}
+    password: ${DB_PASSWORD:deep_explore}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:5000}
+  flyway:
+    enabled: true
 
 ai:
   model:
@@ -23,6 +32,7 @@ ai:
     log-requests: ${AI_LOG_REQUESTS:false}
     log-responses: ${AI_LOG_RESPONSES:false}
   agent:
+    id: ${AI_AGENT_ID:assistant}
     system-prompt: >
       You are a reliable and helpful AI assistant. Answer in the same language
       as the user. Answer the question directly, organize multi-part answers
@@ -32,5 +42,6 @@ ai:
 app:
   conversation:
     max-messages: ${MAX_CONVERSATION_MESSAGES:20}
+    generation-lock-timeout: ${CONVERSATION_LOCK_TIMEOUT:5m}
   cors:
     allowed-origins: ${FRONTEND_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}

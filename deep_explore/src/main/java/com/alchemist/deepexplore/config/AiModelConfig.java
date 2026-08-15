@@ -2,8 +2,13 @@ package com.alchemist.deepexplore.config;
 
 import java.util.Map;
 
+import com.alchemist.deepexplore.agent.adapter.langchain4j.StreamingAssistant;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.service.AiServices;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -30,6 +35,36 @@ public class AiModelConfig {
                 properties.deepReasoningEffort(),
                 properties.deepThinking()
         );
+    }
+
+    @Bean("fastStreamingAssistant")
+    StreamingAssistant fastStreamingAssistant(
+            @Qualifier("fastStreamingChatModel") StreamingChatModel model,
+            LangChain4jMemoryManager chatMemoryManager,
+            @Value("${ai.agent.system-prompt}") String systemPrompt
+    ) {
+        return buildAssistant(model, chatMemoryManager, systemPrompt);
+    }
+
+    @Bean("deepStreamingAssistant")
+    StreamingAssistant deepStreamingAssistant(
+            @Qualifier("deepStreamingChatModel") StreamingChatModel model,
+            LangChain4jMemoryManager chatMemoryManager,
+            @Value("${ai.agent.system-prompt}") String systemPrompt
+    ) {
+        return buildAssistant(model, chatMemoryManager, systemPrompt);
+    }
+
+    private StreamingAssistant buildAssistant(
+            StreamingChatModel model,
+            LangChain4jMemoryManager chatMemoryManager,
+            String systemPrompt
+    ) {
+        return AiServices.builder(StreamingAssistant.class)
+                .streamingChatModel(model)
+                .chatMemoryProvider(chatMemoryManager::create)
+                .systemMessage(systemPrompt)
+                .build();
     }
 
     private StreamingChatModel buildModel(
