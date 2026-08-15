@@ -39,7 +39,10 @@ public class ChatController {
         AgentCommand command = new AgentCommand(
                 request.conversationId(),
                 request.message(),
-                request.mode()
+                request.mode(),
+                request.userMessageId(),
+                request.userParentMessageId(),
+                request.assistantMessageId()
         );
         return agentService.stream(command)
                 .map(event -> ServerSentEvent.<AgentEvent>builder(event)
