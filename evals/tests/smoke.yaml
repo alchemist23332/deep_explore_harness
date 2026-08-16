@@ -1,0 +1,138 @@
+- description: 01 arithmetic and strict output
+  metadata:
+    category: deterministic
+  vars:
+    question: "计算 17 × 2 + 8，只输出数字。"
+  assert:
+    - type: equals
+      value: "42"
+      metric: exact_answer
+
+- description: 02 stable factual knowledge
+  metadata:
+    category: deterministic
+  vars:
+    question: "法国首都是哪座城市？请用一句中文回答。"
+  assert:
+    - type: contains
+      value: "巴黎"
+      metric: factual_keyword
+
+- description: 03 structured information extraction
+  metadata:
+    category: deterministic
+  vars:
+    question: "从以下文本中提取金额、状态和城市：订单A金额120元，状态已支付，收件城市杭州。"
+  assert:
+    - type: contains-all
+      value:
+        - "120"
+        - "已支付"
+        - "杭州"
+      metric: extraction_completeness
+
+- description: 04 strict JSON response
+  metadata:
+    category: deterministic
+  vars:
+    question: "只返回一个JSON对象，不要使用Markdown代码块。字段name固定为Deep Explore，字段enabled固定为true。"
+  assert:
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required:
+          - name
+          - enabled
+        properties:
+          name:
+            const: "Deep Explore"
+          enabled:
+            const: true
+      metric: json_contract
+
+- description: 05 Chinese to English translation
+  metadata:
+    category: semantic
+  vars:
+    question: "将“可靠的软件需要可重复的测试”翻译成英文，只输出译文。"
+  assert:
+    - type: llm-rubric
+      value: "译文准确表达“可靠的软件需要可重复的测试”，没有增加原文不存在的信息，并且只输出英文译文。"
+      threshold: 0.8
+      metric: translation_quality
+
+- description: 06 explain RAG in exactly three points
+  metadata:
+    category: instruction-following
+  vars:
+    question: "用恰好3个要点解释RAG是什么，每个要点只写一句话。"
+  assert:
+    - type: javascript
+      value: |
+        const points = output.split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => /^(?:[-*]|\d+[.)、])\s*/.test(line));
+        return {
+          pass: points.length === 3,
+          score: points.length === 3 ? 1 : 0,
+          reason: `Expected exactly 3 list items, found ${points.length}`,
+        };
+      metric: exact_point_count
+    - type: llm-rubric
+      value: "三个要点准确覆盖RAG的检索、上下文增强和基于上下文生成回答，表述清楚且没有明显事实错误。"
+      threshold: 0.8
+      metric: rag_explanation_quality
+
+- description: 07 concise summary
+  metadata:
+    category: summarization
+  vars:
+    question: "材料：Deep Explore使用Spring Boot、LangChain4j和PostgreSQL构建对话Agent，支持流式输出和持久化会话。请用不超过60个汉字总结材料，只输出摘要。"
+  assert:
+    - type: javascript
+      value: |
+        const length = Array.from(output.replace(/\s/g, '')).length;
+        return {
+          pass: length <= 60,
+          score: length <= 60 ? 1 : 0,
+          reason: `Expected at most 60 non-whitespace characters, found ${length}`,
+        };
+      metric: summary_length
+    - type: llm-rubric
+      value: "摘要准确保留技术栈、对话Agent、流式输出和持久化会话这些核心信息，没有添加材料之外的内容。"
+      threshold: 0.8
+      metric: summary_quality
+
+- description: 08 avoid fabricating future facts
+  metadata:
+    category: uncertainty
+  vars:
+    question: "2035年诺贝尔物理学奖获得者是谁？请直接回答。"
+  assert:
+    - type: llm-rubric
+      value: "明确指出2035年诺贝尔物理学奖尚未公布或当前无法知道，不得编造任何获奖者姓名。"
+      threshold: 0.9
+      metric: future_fact_uncertainty
+
+- description: 09 acknowledge missing real-time data
+  metadata:
+    category: uncertainty
+  vars:
+    question: "现在北京的实时气温是多少？在没有实时查询工具的情况下直接回答。"
+  assert:
+    - type: llm-rubric
+      value: "明确说明没有实时查询能力，不能确认当前气温，不得编造具体温度；可以建议用户查询可靠天气来源。"
+      threshold: 0.9
+      metric: realtime_uncertainty
+
+- description: 10 Java virtual thread tradeoff
+  metadata:
+    category: technical-knowledge
+  vars:
+    question: "分别说明Java虚拟线程的一个主要优势和一个主要限制，保持简洁。"
+  assert:
+    - type: llm-rubric
+      value: "准确说明一个虚拟线程优势和一个真实限制。优势可包括高并发阻塞式任务的低线程成本；限制可包括不适合CPU密集型加速、ThreadLocal开销或特定阻塞/固定场景问题。回答必须明确区分优势与限制。"
+      threshold: 0.8
+      metric: technical_tradeoff_quality

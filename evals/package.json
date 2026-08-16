@@ -1,0 +1,15 @@
+{
+  "name": "deep-explore-evals",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Promptfoo evaluations for the Deep Explore backend",
+  "scripts": {
+    "validate": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo validate config -c promptfooconfig.yaml",
+    "eval:smoke": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo eval -c promptfooconfig.yaml --no-cache -j 1 -o reports/smoke.html -o reports/smoke.json",
+    "view": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo view -n"
+  },
+  "devDependencies": {
+    "@libsql/darwin-arm64": "0.5.29",
+    "promptfoo": "0.122.0"
+  }
+}

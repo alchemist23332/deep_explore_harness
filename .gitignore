@@ -20,3 +20,7 @@
 
 # Logs
 *.log
+
+# Promptfoo evaluation output
+evals/reports/
+evals/.promptfoo/

@@ -1,0 +1,41 @@
+description: Deep Explore FAST mode smoke evaluation
+
+prompts:
+  - label: single-turn-question
+    raw: "{{question}}"
+
+providers:
+  - id: file://providers/deep-explore-sse-provider.js
+    label: deep-explore-fast
+    config:
+      baseUrl: "{{ env.DEEP_EXPLORE_BASE_URL | default('http://127.0.0.1:8080') }}"
+      mode: FAST
+      timeoutMs: 90000
+
+defaultTest:
+  options:
+    provider:
+      id: openai:chat:deepseek-v4-pro
+      config:
+        apiBaseUrl: "{{ env.AI_BASE_URL }}"
+        apiKey: "{{ env.AI_API_KEY }}"
+        temperature: 0
+        max_tokens: 4096
+        showThinking: false
+        passthrough:
+          thinking:
+            type: disabled
+
+tests: file://tests/smoke.yaml
+
+evaluateOptions:
+  maxConcurrency: 1
+  timeoutMs: 90000
+  cache: false
+
+sharing: false
+
+metadata:
+  application: deep-explore
+  suite: smoke
+  targetMode: FAST
