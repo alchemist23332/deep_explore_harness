@@ -3,8 +3,11 @@ package com.alchemist.deepexplore.harness.adapter.out.postgres;
 import com.alchemist.deepexplore.harness.domain.AgentRun;
 import com.alchemist.deepexplore.harness.domain.RunStatus;
 import com.alchemist.deepexplore.harness.port.RunStore;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -54,22 +57,25 @@ public class PostgresRunStore implements RunStore {
                         FROM agent_runs
                         WHERE id = ?
                         """,
-                (resultSet, rowNum) -> new AgentRun(
-                        resultSet.getString("id"),
-                        resultSet.getString("conversation_id"),
-                        resultSet.getString("user_message_id"),
-                        resultSet.getString("assistant_message_id"),
-                        resultSet.getString("agent_id"),
-                        resultSet.getString("profile_id"),
-                        RunStatus.valueOf(resultSet.getString("status")),
-                        resultSet.getString("error_code"),
-                        resultSet.getString("error_message"),
-                        toInstant(resultSet.getObject("created_at", OffsetDateTime.class)),
-                        toInstant(resultSet.getObject("started_at", OffsetDateTime.class)),
-                        toInstant(resultSet.getObject("completed_at", OffsetDateTime.class))
-                ),
+                (resultSet, rowNum) -> mapRun(resultSet),
                 runId
         ).stream().findFirst();
+    }
+
+    @Override
+    public List<AgentRun> listByConversation(String conversationId) {
+        return jdbcTemplate.query("""
+                        SELECT id, conversation_id, user_message_id,
+                               assistant_message_id, agent_id, profile_id,
+                               status, error_code, error_message,
+                               created_at, started_at, completed_at
+                        FROM agent_runs
+                        WHERE conversation_id = ?
+                        ORDER BY created_at
+                        """,
+                (resultSet, rowNum) -> mapRun(resultSet),
+                conversationId
+        );
     }
 
     @Override
@@ -105,6 +111,23 @@ public class PostgresRunStore implements RunStore {
 
     private static OffsetDateTime toOffsetDateTime(Instant value) {
         return value == null ? null : value.atOffset(java.time.ZoneOffset.UTC);
+    }
+
+    private static AgentRun mapRun(ResultSet resultSet) throws SQLException {
+        return new AgentRun(
+                resultSet.getString("id"),
+                resultSet.getString("conversation_id"),
+                resultSet.getString("user_message_id"),
+                resultSet.getString("assistant_message_id"),
+                resultSet.getString("agent_id"),
+                resultSet.getString("profile_id"),
+                RunStatus.valueOf(resultSet.getString("status")),
+                resultSet.getString("error_code"),
+                resultSet.getString("error_message"),
+                toInstant(resultSet.getObject("created_at", OffsetDateTime.class)),
+                toInstant(resultSet.getObject("started_at", OffsetDateTime.class)),
+                toInstant(resultSet.getObject("completed_at", OffsetDateTime.class))
+        );
     }
 
     private static Instant toInstant(OffsetDateTime value) {

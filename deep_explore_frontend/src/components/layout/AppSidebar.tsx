@@ -7,6 +7,7 @@ import {
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   Bot,
+  Box,
   MessageSquareText,
   MoreHorizontal,
   Pencil,
@@ -16,10 +17,12 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { useWorkspace } from '../../runtime/workspace-context'
+import { useSandboxWorkspace } from '../../runtime/sandbox-workspace-context'
 
 export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [search, setSearch] = useState('')
   const { config, serviceAvailable } = useWorkspace()
+  const { panelOpen, setPanelOpen } = useSandboxWorkspace()
 
   return (
     <aside className="sidebar">
@@ -40,6 +43,18 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
         <Plus size={17} />
         新建对话
       </ThreadListPrimitive.New>
+
+      <button
+        type="button"
+        className={`sidebar-sandbox-link ${panelOpen ? 'active' : ''}`}
+        onClick={() => {
+          setPanelOpen(true)
+          onNavigate?.()
+        }}
+      >
+        <Box size={16} />
+        沙箱工作区
+      </button>
 
       <label className="thread-search">
         <Search size={15} aria-hidden="true" />

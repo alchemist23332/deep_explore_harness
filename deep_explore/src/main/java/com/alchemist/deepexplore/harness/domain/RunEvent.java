@@ -8,7 +8,9 @@ public sealed interface RunEvent {
 
     record RunStarted(
             String profileId,
-            String userMessageId
+            String userMessageId,
+            String assistantMessageId,
+            String searchProvider
     ) implements RunEvent {
         @Override
         public String type() {
@@ -37,7 +39,7 @@ public sealed interface RunEvent {
     record ToolCallCompleted(
             String toolCallId,
             String toolName,
-            String resultJson,
+            String result,
             boolean success
     ) implements RunEvent {
         @Override

@@ -33,11 +33,45 @@ ai:
     log-responses: ${AI_LOG_RESPONSES:false}
   agent:
     id: ${AI_AGENT_ID:assistant}
-    system-prompt: >
-      You are a reliable and helpful AI assistant. Answer in the same language
-      as the user. Answer the question directly, organize multi-part answers
-      clearly, state uncertainty instead of inventing facts, and keep simple
-      questions concise. Use Markdown when it improves readability.
+    max-tool-calling-round-trips: ${AGENT_MAX_TOOL_CALLING_ROUND_TRIPS:3}
+
+tools:
+  web-search:
+    enabled: ${WEB_SEARCH_ENABLED:false}
+    default-provider: ${WEB_SEARCH_PROVIDER:TAVILY}
+    max-query-characters: ${WEB_SEARCH_MAX_QUERY_CHARACTERS:${TAVILY_MAX_QUERY_CHARACTERS:400}}
+    max-event-result-characters: ${TOOL_MAX_EVENT_RESULT_CHARACTERS:16384}
+    jina:
+      api-key: ${JINA_API_KEY:}
+      base-url: ${JINA_SEARCH_BASE_URL:https://s.jina.ai/}
+      timeout: ${JINA_SEARCH_TIMEOUT:20s}
+      max-result-characters: ${JINA_MAX_RESULT_CHARACTERS:30000}
+    tavily:
+      api-key: ${TAVILY_API_KEY:}
+      base-url: ${TAVILY_BASE_URL:https://api.tavily.com/}
+      timeout: ${TAVILY_TIMEOUT:10s}
+      search-depth: ${TAVILY_SEARCH_DEPTH:basic}
+      include-answer: false
+      include-raw-content: false
+
+sandbox:
+  enabled: ${SANDBOX_ENABLED:true}
+  owner-id: ${SANDBOX_OWNER_ID:local-user}
+  data-directory: ${SANDBOX_DATA_DIR:../.deep-explore-data}
+  command-timeout: ${SANDBOX_COMMAND_TIMEOUT:60s}
+  max-command-output-bytes: ${SANDBOX_MAX_COMMAND_OUTPUT_BYTES:1048576}
+  max-file-bytes: ${SANDBOX_MAX_FILE_BYTES:10485760}
+  max-preview-bytes: ${SANDBOX_MAX_PREVIEW_BYTES:1048576}
+  max-zip-bytes: ${SANDBOX_MAX_ZIP_BYTES:104857600}
+  max-extracted-bytes: ${SANDBOX_MAX_EXTRACTED_BYTES:524288000}
+  max-extracted-files: ${SANDBOX_MAX_EXTRACTED_FILES:10000}
+  docker:
+    host: ${SANDBOX_DOCKER_HOST:${DOCKER_HOST:unix:///var/run/docker.sock}}
+    java21-image: ${SANDBOX_JAVA21_IMAGE:deep-explore/sandbox-java21:v1}
+    memory-bytes: ${SANDBOX_MEMORY_BYTES:2147483648}
+    nano-cpus: ${SANDBOX_NANO_CPUS:2000000000}
+    pids-limit: ${SANDBOX_PIDS_LIMIT:256}
+    network-mode: ${SANDBOX_NETWORK_MODE:bridge}
 
 app:
   conversation:

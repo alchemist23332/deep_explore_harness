@@ -1,7 +1,8 @@
 package com.alchemist.deepexplore.harness.application;
 
 import com.alchemist.deepexplore.agent.application.AgentExecutorRegistry;
-import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
+import com.alchemist.deepexplore.agent.domain.AgentMessage;
+import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionRequest;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
 import com.alchemist.deepexplore.agent.spi.AgentExecutor;
@@ -16,10 +17,8 @@ import com.alchemist.deepexplore.harness.domain.RunEventEnvelope;
 import com.alchemist.deepexplore.harness.domain.RunStatus;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,7 +38,9 @@ public class HarnessOrchestrator implements HarnessService {
     private final MessageStore messageStore;
     private final ConversationLock conversationLock;
     private final RunPersistenceService persistence;
+    private final AgentExecutionEventMapper eventMapper;
     private final Duration generationLockTimeout;
+    private final int maxMessages;
 
     public HarnessOrchestrator(
             AgentExecutorRegistry agentRegistry,
@@ -47,15 +48,19 @@ public class HarnessOrchestrator implements HarnessService {
             MessageStore messageStore,
             ConversationLock conversationLock,
             RunPersistenceService persistence,
+            AgentExecutionEventMapper eventMapper,
             @Value("${app.conversation.generation-lock-timeout:5m}")
-            Duration generationLockTimeout
+            Duration generationLockTimeout,
+            @Value("${app.conversation.max-messages:20}") int maxMessages
     ) {
         this.agentRegistry = agentRegistry;
         this.conversationStore = conversationStore;
         this.messageStore = messageStore;
         this.conversationLock = conversationLock;
         this.persistence = persistence;
+        this.eventMapper = eventMapper;
         this.generationLockTimeout = generationLockTimeout;
+        this.maxMessages = maxMessages;
     }
 
     @Override
@@ -73,16 +78,20 @@ public class HarnessOrchestrator implements HarnessService {
                 command.conversationId(),
                 null
         );
-        RunContext context = createRunContext(command, conversation, executor, sink);
-        RunEventEnvelope startedEvent = context.envelope(new RunEvent.RunStarted(
-                context.run.profileId(),
-                context.run.userMessageId()
+        RunSession session = createRunSession(command, conversation, executor, sink);
+        RunEventEnvelope startedEvent = session.envelope(new RunEvent.RunStarted(
+                session.run().profileId(),
+                session.run().userMessageId(),
+                session.run().assistantMessageId(),
+                command.searchProvider() == null
+                        ? null
+                        : command.searchProvider().name()
         ));
-        persistence.start(context.run, startedEvent);
+        persistence.start(session.run(), startedEvent);
         sink.next(startedEvent);
 
         if (!executor.isConfigured()) {
-            context.fail(
+            session.fail(
                     "MODEL_NOT_CONFIGURED",
                     "服务端尚未配置 AI_API_KEY"
             );
@@ -90,34 +99,38 @@ public class HarnessOrchestrator implements HarnessService {
         }
 
         if (!conversationLock.tryAcquire(conversation.id(), generationLockTimeout)) {
-            context.fail(
+            session.fail(
                     "CONVERSATION_BUSY",
                     "该会话正在生成回复，请等待当前请求完成"
             );
             return;
         }
-        context.lockAcquired.set(true);
+        session.markLockAcquired();
 
         try {
             boolean replay = messageStore.exists(
                     conversation.id(),
-                    context.run.userMessageId()
+                    session.run().userMessageId()
             );
-            context.snapshot = executor.prepare(
-                    conversation.id(),
-                    replay,
-                    command.userParentMessageId()
+            AgentStateSnapshot snapshot = executor.prepare(
+                    new AgentPreparationRequest(
+                            conversation.id(),
+                            replay,
+                            history(conversation, command, replay)
+                    )
             );
-            context.snapshotPrepared.set(true);
+            session.prepared(snapshot);
             persistence.checkpoint(
-                    context.run,
-                    context.snapshot.payload(),
-                    version -> context.envelope(new RunEvent.CheckpointSaved(version))
+                    session.run(),
+                    snapshot.payload(),
+                    version -> session.envelope(
+                            new RunEvent.CheckpointSaved(version)
+                    )
             );
 
             messageStore.append(
                     conversation.id(),
-                    context.run.userMessageId(),
+                    session.run().userMessageId(),
                     command.userParentMessageId(),
                     ConversationMessage.Role.USER,
                     command.message(),
@@ -127,31 +140,54 @@ public class HarnessOrchestrator implements HarnessService {
             );
 
             AgentExecutionRequest executionRequest = new AgentExecutionRequest(
-                    context.run.id(),
+                    session.run().id(),
                     conversation.id(),
-                    context.run.agentId(),
-                    context.run.profileId(),
-                    command.message()
+                    session.run().agentId(),
+                    session.run().profileId(),
+                    command.message(),
+                    command.searchProvider()
             );
+            sink.onCancel(session::cancel);
             Disposable subscription = executor.execute(executionRequest)
                     .publishOn(Schedulers.boundedElastic())
                     .subscribe(
-                            context::onAgentEvent,
-                            error -> context.fail(
+                            session::onAgentEvent,
+                            error -> session.fail(
                                     "EXECUTOR_STREAM_FAILED",
                                     "Agent 执行流异常"
                             ),
-                            context::onAgentStreamCompleted
+                            session::onAgentStreamCompleted
                     );
-            context.subscription.set(subscription);
-            sink.onCancel(context::cancel);
+            session.attach(subscription);
         } catch (RuntimeException error) {
-            log.error("Unable to start run {}", context.run.id(), error);
-            context.fail("RUN_START_FAILED", "Agent Run 启动失败");
+            log.error("Unable to start run {}", session.run().id(), error);
+            session.fail("RUN_START_FAILED", "Agent Run 启动失败");
         }
     }
 
-    private RunContext createRunContext(
+    private List<AgentMessage> history(
+            Conversation conversation,
+            StartRunCommand command,
+            boolean replay
+    ) {
+        String headMessageId = replay
+                ? command.userParentMessageId()
+                : conversation.headMessageId();
+        return messageStore.branch(
+                        conversation.id(),
+                        headMessageId,
+                        maxMessages
+                ).stream()
+                .map(message -> new AgentMessage(
+                        message.role() == ConversationMessage.Role.USER
+                                ? AgentMessage.Role.USER
+                                : AgentMessage.Role.ASSISTANT,
+                        message.content()
+                ))
+                .toList();
+    }
+
+    private RunSession createRunSession(
             StartRunCommand command,
             Conversation conversation,
             AgentExecutor executor,
@@ -172,167 +208,14 @@ public class HarnessOrchestrator implements HarnessService {
                 now,
                 null
         );
-        return new RunContext(run, executor, sink);
-    }
-
-    private final class RunContext {
-
-        private final AgentRun run;
-        private final AgentExecutor executor;
-        private final FluxSink<RunEventEnvelope> sink;
-        private final AtomicLong sequence = new AtomicLong();
-        private final AtomicBoolean terminal = new AtomicBoolean();
-        private final AtomicBoolean lockAcquired = new AtomicBoolean();
-        private final AtomicBoolean snapshotPrepared = new AtomicBoolean();
-        private final AtomicReference<Disposable> subscription = new AtomicReference<>();
-        private AgentStateSnapshot snapshot = AgentStateSnapshot.empty();
-
-        private RunContext(
-                AgentRun run,
-                AgentExecutor executor,
-                FluxSink<RunEventEnvelope> sink
-        ) {
-            this.run = run;
-            this.executor = executor;
-            this.sink = sink;
-        }
-
-        private void onAgentEvent(AgentExecutionEvent event) {
-            switch (event) {
-                case AgentExecutionEvent.TextDelta delta ->
-                        emit(new RunEvent.TextDelta(delta.text()));
-                case AgentExecutionEvent.ToolCallStarted tool ->
-                        emit(new RunEvent.ToolCallStarted(
-                                tool.toolCallId(),
-                                tool.toolName(),
-                                tool.argumentsJson()
-                        ));
-                case AgentExecutionEvent.ToolCallCompleted tool ->
-                        emit(new RunEvent.ToolCallCompleted(
-                                tool.toolCallId(),
-                                tool.toolName(),
-                                tool.resultJson(),
-                                tool.success()
-                        ));
-                case AgentExecutionEvent.ApprovalRequired approval ->
-                        emit(new RunEvent.ApprovalRequired(
-                                approval.approvalId(),
-                                approval.prompt()
-                        ));
-                case AgentExecutionEvent.ArtifactProduced artifact ->
-                        emit(new RunEvent.ArtifactProduced(
-                                artifact.artifactId(),
-                                artifact.kind(),
-                                artifact.uri(),
-                                artifact.metadata()
-                        ));
-                case AgentExecutionEvent.Completed completed ->
-                        complete(completed);
-                case AgentExecutionEvent.Failed failed ->
-                        fail(failed.code(), failed.message());
-            }
-        }
-
-        private void complete(AgentExecutionEvent.Completed completed) {
-            if (!terminal.compareAndSet(false, true)) {
-                return;
-            }
-            try {
-                RunEventEnvelope completedEvent = envelope(new RunEvent.RunCompleted(
-                        run.assistantMessageId(),
-                        completed.model(),
-                        completed.tokenUsage()
-                ));
-                persistence.complete(run, completed, completedEvent);
-                sink.next(completedEvent);
-                cleanup();
-                sink.complete();
-            } catch (RuntimeException error) {
-                terminal.set(false);
-                fail("RUN_COMMIT_FAILED", "Agent Run 结果提交失败");
-            }
-        }
-
-        private void fail(String code, String message) {
-            if (!terminal.compareAndSet(false, true)) {
-                return;
-            }
-            try {
-                if (snapshotPrepared.get()) {
-                    try {
-                        executor.restore(run.conversationId(), snapshot);
-                    } catch (RuntimeException error) {
-                        log.error("Unable to restore run {}", run.id(), error);
-                    }
-                }
-                RunEventEnvelope failedEvent = envelope(new RunEvent.RunFailed(
-                        code,
-                        message
-                ));
-                persistence.fail(run, code, message, failedEvent);
-                sink.next(failedEvent);
-            } finally {
-                cleanup();
-                sink.complete();
-            }
-        }
-
-        private void cancel() {
-            Disposable current = subscription.get();
-            if (current != null) {
-                current.dispose();
-            }
-            Schedulers.boundedElastic().schedule(() -> {
-                if (!terminal.compareAndSet(false, true)) {
-                    return;
-                }
-                try {
-                    if (snapshotPrepared.get()) {
-                        try {
-                            executor.restore(run.conversationId(), snapshot);
-                        } catch (RuntimeException error) {
-                            log.error("Unable to restore cancelled run {}", run.id(), error);
-                        }
-                    }
-                    persistence.cancel(run, envelope(new RunEvent.RunCancelled()));
-                } catch (RuntimeException error) {
-                    log.error("Unable to cancel run {}", run.id(), error);
-                } finally {
-                    cleanup();
-                }
-            });
-        }
-
-        private void onAgentStreamCompleted() {
-            if (!terminal.get()) {
-                fail("EXECUTOR_COMPLETED_WITHOUT_RESULT", "Agent 未返回最终结果");
-            }
-        }
-
-        private void emit(RunEvent event) {
-            RunEventEnvelope envelope = envelope(event);
-            persistence.appendEvent(envelope);
-            sink.next(envelope);
-        }
-
-        private RunEventEnvelope envelope(RunEvent event) {
-            return new RunEventEnvelope(
-                    UUID.randomUUID().toString(),
-                    run.id(),
-                    run.conversationId(),
-                    run.agentId(),
-                    sequence.incrementAndGet(),
-                    Instant.now(),
-                    event
-            );
-        }
-
-        private void cleanup() {
-            if (lockAcquired.compareAndSet(true, false)) {
-                conversationLock.release(run.conversationId());
-            }
-            executor.release(run.conversationId());
-        }
+        return new RunSession(
+                run,
+                executor,
+                sink,
+                conversationLock,
+                persistence,
+                eventMapper
+        );
     }
 
     private static String valueOrRandom(String value) {

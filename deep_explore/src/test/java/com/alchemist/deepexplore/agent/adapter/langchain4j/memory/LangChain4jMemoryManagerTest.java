@@ -1,55 +1,38 @@
 package com.alchemist.deepexplore.agent.adapter.langchain4j.memory;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
+import com.alchemist.deepexplore.agent.domain.AgentMessage;
+import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
-import com.alchemist.deepexplore.conversation.domain.Conversation;
-import com.alchemist.deepexplore.conversation.domain.ConversationMessage;
-import com.alchemist.deepexplore.conversation.port.ConversationStore;
-import com.alchemist.deepexplore.conversation.port.MessageStore;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class LangChain4jMemoryManagerTest {
 
     private final InMemoryStore memoryStore = new InMemoryStore();
-    private final ConversationStore conversationStore = mock(ConversationStore.class);
-    private final MessageStore messageStore = mock(MessageStore.class);
     private final LangChain4jMemoryManager manager =
-            new LangChain4jMemoryManager(
-                    memoryStore,
-                    conversationStore,
-                    messageStore,
-                    3
-            );
+            new LangChain4jMemoryManager(memoryStore, 3);
 
     @Test
     void hydratesAndTrimsMemoryFromPersistentHistory() {
-        when(conversationStore.find("conversation-1"))
-                .thenReturn(Optional.of(new Conversation(
-                        "conversation-1",
-                        "test",
-                        Conversation.Status.REGULAR,
-                        "message-4",
-                        Instant.EPOCH,
-                        Instant.EPOCH
-                )));
-        when(messageStore.branch("conversation-1", "message-4", 3))
-                .thenReturn(List.of(
-                        message(1, ConversationMessage.Role.USER, "one"),
-                        message(2, ConversationMessage.Role.ASSISTANT, "two"),
-                        message(3, ConversationMessage.Role.USER, "three"),
-                        message(4, ConversationMessage.Role.ASSISTANT, "four")
-                ));
+        manager.prepare(new AgentPreparationRequest(
+                "conversation-1",
+                true,
+                List.of(
+                        new AgentMessage(AgentMessage.Role.USER, "one"),
+                        new AgentMessage(AgentMessage.Role.ASSISTANT, "two"),
+                        new AgentMessage(AgentMessage.Role.USER, "three"),
+                        new AgentMessage(AgentMessage.Role.ASSISTANT, "four")
+                )
+        ));
 
         var memory = manager.create("conversation-1");
 
@@ -64,11 +47,11 @@ class LangChain4jMemoryManagerTest {
                 "conversation-1",
                 List.of(UserMessage.from("stable"))
         );
-        AgentStateSnapshot snapshot = manager.prepare(
+        AgentStateSnapshot snapshot = manager.prepare(new AgentPreparationRequest(
                 "conversation-1",
                 false,
-                null
-        );
+                List.of()
+        ));
         memoryStore.updateMessages(
                 "conversation-1",
                 List.of(UserMessage.from("stable"), UserMessage.from("failed"))
@@ -81,30 +64,38 @@ class LangChain4jMemoryManagerTest {
                 .containsExactly("stable");
     }
 
-    private static ConversationMessage message(
-            long sequence,
-            ConversationMessage.Role role,
-            String content
-    ) {
-        return new ConversationMessage(
-                "message-" + sequence,
-                "conversation-1",
-                null,
-                sequence,
-                role,
-                content,
-                ConversationMessage.Status.COMPLETE,
-                null,
-                null,
-                Instant.EPOCH.plusSeconds(sequence)
-        );
+    @Test
+    void persistsThinkingOnlyForToolCallMessages() {
+        AiMessage finalAnswer = AiMessage.builder()
+                .text("final")
+                .thinking("private final reasoning")
+                .build();
+        AiMessage toolCall = AiMessage.builder()
+                .thinking("reasoning required by the provider")
+                .toolExecutionRequests(List.of(
+                        ToolExecutionRequest.builder()
+                                .id("tool-1")
+                                .name("web_search")
+                                .arguments("{\"query\":\"latest\"}")
+                                .build()
+                ))
+                .build();
+
+        List<ChatMessage> persisted =
+                PostgresChatMemoryStore.messagesForPersistence(
+                        List.of(finalAnswer, toolCall)
+                );
+
+        assertThat(((AiMessage) persisted.get(0)).thinking()).isNull();
+        assertThat(((AiMessage) persisted.get(1)).thinking())
+                .isEqualTo("reasoning required by the provider");
     }
 
     private static String text(ChatMessage message) {
         if (message instanceof UserMessage userMessage) {
             return userMessage.singleText();
         }
-        return ((dev.langchain4j.data.message.AiMessage) message).text();
+        return ((AiMessage) message).text();
     }
 
     private static final class InMemoryStore implements PersistentChatMemoryStore {

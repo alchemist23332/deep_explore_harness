@@ -17,7 +17,7 @@ public sealed interface AgentExecutionEvent {
     record ToolCallCompleted(
             String toolCallId,
             String toolName,
-            String resultJson,
+            String result,
             boolean success
     ) implements AgentExecutionEvent {
     }

@@ -1,11 +1,17 @@
 import { createContext, useContext } from 'react'
-import type { AgentMode, RuntimeConfig } from '../api/chat'
+import type {
+  AgentMode,
+  RuntimeConfig,
+  SearchProvider,
+} from '../api/chat'
 
 export type Theme = 'light' | 'dark'
 
 export interface WorkspaceContextValue {
   mode: AgentMode
   setMode: (mode: AgentMode) => void
+  searchProvider: SearchProvider
+  setSearchProvider: (provider: SearchProvider) => void
   config: RuntimeConfig | null
   serviceAvailable: boolean
   theme: Theme

@@ -3,11 +3,9 @@ package com.alchemist.deepexplore.agent.adapter.langchain4j.memory;
 import static dev.langchain4j.data.message.ChatMessageDeserializer.messagesFromJson;
 import static dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson;
 
+import com.alchemist.deepexplore.agent.domain.AgentMessage;
+import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
-import com.alchemist.deepexplore.conversation.domain.Conversation;
-import com.alchemist.deepexplore.conversation.domain.ConversationMessage;
-import com.alchemist.deepexplore.conversation.port.ConversationStore;
-import com.alchemist.deepexplore.conversation.port.MessageStore;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -21,19 +19,13 @@ import org.springframework.stereotype.Component;
 public class LangChain4jMemoryManager {
 
     private final PersistentChatMemoryStore memoryStore;
-    private final ConversationStore conversationStore;
-    private final MessageStore messageStore;
     private final int maxMessages;
 
     public LangChain4jMemoryManager(
             PersistentChatMemoryStore memoryStore,
-            ConversationStore conversationStore,
-            MessageStore messageStore,
             @Value("${app.conversation.max-messages:20}") int maxMessages
     ) {
         this.memoryStore = memoryStore;
-        this.conversationStore = conversationStore;
-        this.messageStore = messageStore;
         this.maxMessages = maxMessages;
     }
 
@@ -45,19 +37,16 @@ public class LangChain4jMemoryManager {
                 .chatMemoryStore(memoryStore)
                 .alwaysKeepSystemMessageFirst(true)
                 .build();
-        if (!memoryStore.contains(conversationId)) {
-            memory.set(historyMessages(conversationId));
-        }
         return memory;
     }
 
-    public AgentStateSnapshot prepare(
-            String conversationId,
-            boolean replay,
-            String rewindHeadMessageId
-    ) {
-        if (replay) {
-            rebuildThrough(conversationId, rewindHeadMessageId);
+    public AgentStateSnapshot prepare(AgentPreparationRequest request) {
+        String conversationId = request.conversationId();
+        if (request.rebuildMemory() || !memoryStore.contains(conversationId)) {
+            memoryStore.updateMessages(
+                    conversationId,
+                    toChatMessages(request.history())
+            );
         }
         return new AgentStateSnapshot(messagesToJson(
                 List.copyOf(create(conversationId).messages())
@@ -71,33 +60,11 @@ public class LangChain4jMemoryManager {
         );
     }
 
-    private void rebuildThrough(String conversationId, String headMessageId) {
-        memoryStore.updateMessages(
-                conversationId,
-                toChatMessages(messageStore.branch(
-                        conversationId,
-                        headMessageId,
-                        maxMessages
-                ))
-        );
-    }
-
-    private List<ChatMessage> historyMessages(String conversationId) {
-        String headMessageId = conversationStore.find(conversationId)
-                .map(Conversation::headMessageId)
-                .orElse(null);
-        return toChatMessages(messageStore.branch(
-                conversationId,
-                headMessageId,
-                maxMessages
-        ));
-    }
-
     private static List<ChatMessage> toChatMessages(
-            List<ConversationMessage> messages
+            List<AgentMessage> messages
     ) {
         return messages.stream()
-                .map(message -> message.role() == ConversationMessage.Role.USER
+                .map(message -> message.role() == AgentMessage.Role.USER
                         ? UserMessage.from(message.content())
                         : AiMessage.from(message.content()))
                 .map(ChatMessage.class::cast)

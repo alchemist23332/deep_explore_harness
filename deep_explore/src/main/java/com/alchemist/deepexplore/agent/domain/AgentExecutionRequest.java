@@ -5,6 +5,30 @@ public record AgentExecutionRequest(
         String conversationId,
         String agentId,
         String profileId,
-        String message
+        String message,
+        WebSearchProvider searchProvider
 ) {
+
+    public AgentExecutionRequest {
+        searchProvider = searchProvider == null
+                ? WebSearchProvider.TAVILY
+                : searchProvider;
+    }
+
+    public AgentExecutionRequest(
+            String runId,
+            String conversationId,
+            String agentId,
+            String profileId,
+            String message
+    ) {
+        this(
+                runId,
+                conversationId,
+                agentId,
+                profileId,
+                message,
+                WebSearchProvider.TAVILY
+        );
+    }
 }

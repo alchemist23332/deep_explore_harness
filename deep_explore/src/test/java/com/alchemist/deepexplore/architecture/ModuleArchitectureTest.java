@@ -44,4 +44,26 @@ class ModuleArchitectureTest {
                     .should().dependOnClassesThat().resideInAPackage(
                             "dev.langchain4j.."
                     );
+
+    @ArchTest
+    static final ArchRule application_does_not_depend_on_adapters =
+            noClasses().that().resideInAPackage("..application..")
+                    .should().dependOnClassesThat().resideInAPackage(
+                            "..adapter.."
+                    );
+
+    @ArchTest
+    static final ArchRule input_adapters_do_not_use_output_ports =
+            noClasses().that().resideInAPackage("..adapter.in.web..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "..port..",
+                            "..adapter.out.."
+                    );
+
+    @ArchTest
+    static final ArchRule agent_does_not_depend_on_conversation =
+            noClasses().that().resideInAPackage("..agent..")
+                    .should().dependOnClassesThat().resideInAPackage(
+                            "..conversation.."
+                    );
 }
