@@ -10,6 +10,7 @@ LangChain4j，前端使用 React、TypeScript、assistant-ui 和 Streamdown。
 - 流式 Markdown、GFM 表格、代码高亮和代码复制。
 - PostgreSQL 完整会话持久化、自动标题、搜索、重命名和删除。
 - LangChain4j AI Services 与 ChatMemory 多轮上下文管理。
+- 可选 Tavily `web_search` 与 LangChain4j ReAct 工具循环。
 - Harness Run/Event/Checkpoint 持久化与强类型执行事件。
 - Agent Executor Registry，支持按 `agentId` 扩展不同 Agent 实现。
 - PostgreSQL 会话生成锁、服务重启恢复与浏览器旧历史自动迁移。
@@ -25,13 +26,12 @@ LangChain4j，前端使用 React、TypeScript、assistant-ui 和 Streamdown。
 └── .env.deepseek.example     # DeepSeek V4 配置示例
 ```
 
-后端通过 `AgentService` 兼容门面保持现有 API，由 `HarnessOrchestrator`
-管理运行生命周期。当前执行器是 `LangChain4jAgentExecutor`，以后可以增加
-LangGraph4j 实现，或通过 HTTP 调用独立的 Python LangGraph Runtime，而无需
-修改 Controller 和前端协议。
+后端由 `ChatStreamService` 将现有 HTTP/SSE 协议映射到 Harness，
+`HarnessOrchestrator` 负责高层编排，`RunSession` 管理单次运行生命周期。
+当前执行器是 `LangChain4jAgentExecutor`，以后可以增加 LangGraph4j 实现，
+或通过 HTTP 调用独立的 Python LangGraph Runtime，而无需修改前端协议。
 
-当前 `AgentService` 已作为兼容门面委托给 Harness。新 Agent 应实现
-`AgentExecutor` 并注册到 `AgentExecutorRegistry`。完整边界和运行流程见
+新 Agent 应实现 `AgentExecutor` 并注册到 `AgentExecutorRegistry`。完整边界和运行流程见
 [`docs/architecture/agent-harness.md`](docs/architecture/agent-harness.md)。
 
 ## 环境要求
@@ -80,6 +80,27 @@ AI_API_KEY=sk-你的真实DeepSeekKey
 
 - `deepseek-v4-flash`：快速模式，关闭思考。
 - `deepseek-v4-pro`：深度模式，开启 `high` 思考强度。
+
+### 可选 Web Search
+
+`web_search` 默认使用 Tavily。配置 Key 后启用：
+
+```dotenv
+WEB_SEARCH_ENABLED=true
+WEB_SEARCH_PROVIDER=TAVILY
+TAVILY_API_KEY=tvly-你的真实TavilyKey
+```
+
+后端只向模型注册一个 `web_search` Tool。请求参数 `searchProvider` 可传
+`JINA` 或 `TAVILY`，未传时使用 `WEB_SEARCH_PROVIDER`。模型只在需要实时、
+时效性或外部验证信息时调用搜索，并在最终回答中引用来源 URL。
+
+工具调用过程会通过同一个 SSE 响应的 `tool_start`、`tool_end` 事件实时发送
+到前端。前端在助手消息内显示可折叠的执行时间线；刷新会话后，通过持久化的
+Run Events 恢复该时间线。浏览器只接收白名单摘要，不接收完整工具结果。
+
+中国大陆网络如无法解析 `s.jina.ai`，可设置
+`JINA_SEARCH_BASE_URL=https://s.jinaai.cn/` 并配置 `JINA_API_KEY`。
 
 API Key 只应保存在被 Git 忽略的 `.env` 文件、部署平台密钥库或密码管理器中。
 不要写入 `application.yml`、`.env.example`、前端环境变量或提交记录。
@@ -218,6 +239,7 @@ npm run lint
 - `GET/POST /api/conversations`
 - `GET/PATCH/DELETE /api/conversations/{id}`
 - `GET /api/conversations/{id}/messages`
+- `GET /api/conversations/{id}/run-activities`
 - `POST /api/conversations/import`
 
 `mode` 支持：
@@ -232,8 +254,11 @@ npm run lint
 响应类型为 `text/event-stream`，当前事件包括：
 
 - `metadata`：返回服务端生成的 `conversationId`
+- `tool_start`：工具名称、Provider 和安全处理后的任务摘要
+- `tool_end`：工具成功或失败状态
 - `delta`：模型增量文本
 - `done`：本轮完成
 - `error`：配置、并发或模型调用错误
 
-协议已为后续 `tool_start`、`tool_end` 和图节点事件预留扩展空间。
+每个事件还携带 `runId`、`sequence`、`occurredAt` 和可选的
+`assistantMessageId`，前端据此将工具活动绑定到正确的助手消息。

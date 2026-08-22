@@ -9,6 +9,8 @@
 .env.local
 !.env.example
 .ollama-runtime/
+.deep-explore-data/
+.rt/
 
 # Java
 **/target/
@@ -24,3 +26,6 @@
 # Promptfoo evaluation output
 evals/reports/
 evals/.promptfoo/
+
+# reference
+background_reference/

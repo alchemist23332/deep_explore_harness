@@ -31,6 +31,7 @@ psql -d postgres -c "ALTER ROLE deep_explore WITH PASSWORD 'deep_explore';"
 set -a
 source .env
 set +a
+source ./scripts/docker-env.sh
 cd deep_explore
 ./mvnw spring-boot:run
 ```
@@ -53,6 +54,78 @@ curl http://localhost:8080/api/config
 ```
 
 前端和后端使用 `Ctrl+C` 停止。
+
+## 本地 Java 沙箱
+
+当前开发环境使用 Homebrew Docker CLI + Colima。首次安装：
+
+```bash
+brew install docker docker-compose colima socat
+```
+
+启动项目专用 Docker Engine：
+
+```bash
+./scripts/docker-runtime.sh start
+source ./scripts/docker-env.sh
+```
+
+如果上次初始化中断，使用：
+
+```bash
+./scripts/docker-runtime.sh reset
+```
+
+然后在项目根目录构建 Java 21 沙箱镜像：
+
+```bash
+docker build \
+  -t deep-explore/sandbox-java21:v1 \
+  sandbox/java21
+```
+
+后端启动后访问：
+
+```text
+http://127.0.0.1:5173/workspaces
+```
+
+工作区文件持久化在被 Git 忽略的 `.deep-explore-data/workspaces/`。容器停止或
+重建不会删除文件；在页面中删除工作区会同时删除容器和对应文件目录。
+
+```bash
+# 检查沙箱镜像和容器
+docker image inspect deep-explore/sandbox-java21:v1
+docker ps -a --filter label=deep-explore.managed=true
+
+# 查看本地工作区数据
+find .deep-explore-data/workspaces -maxdepth 3 -type f
+```
+
+## Web Search Provider
+
+默认 Provider 为 Tavily。配置 Key 后启用：
+
+```dotenv
+WEB_SEARCH_ENABLED=true
+WEB_SEARCH_PROVIDER=TAVILY
+TAVILY_API_KEY=tvly-你的真实Key
+```
+
+请求未传 `searchProvider` 时使用 `WEB_SEARCH_PROVIDER`。单次任务可在
+`POST /api/chat/stream` 的 JSON 中传入 `"searchProvider": "JINA"` 或
+`"searchProvider": "TAVILY"` 覆盖默认值。前端输入框下方也提供相同选择。
+
+中国大陆网络若因 `jina.ai` DNS 污染而超时，可使用 Jina 提供的临时镜像；
+该镜像要求 API Key：
+
+```dotenv
+JINA_SEARCH_BASE_URL=https://s.jinaai.cn/
+JINA_API_KEY=你的JinaKey
+```
+
+Tavily Key 只保存在被 Git 忽略的 `.env` 中。模型会在需要实时或外部信息时
+自主调用统一的 `web_search` Tool；普通问题仍可直接回答。
 
 ## Promptfoo 评测
 

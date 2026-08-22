@@ -14,6 +14,7 @@ import {
   UserRound,
 } from 'lucide-react'
 import { lazy, Suspense, type ReactElement } from 'react'
+import { ToolActivityTimeline } from './ToolActivityTimeline'
 
 const MarkdownText = lazy(() =>
   import('./MarkdownText').then((module) => ({
@@ -46,7 +47,16 @@ export function AssistantMessage() {
       </div>
       <div className="assistant-message-body">
         <div className="assistant-message-content">
-          <MessagePrimitive.Parts components={{ Text: AssistantText }} />
+          <MessagePrimitive.Parts
+            components={{
+              Text: AssistantText,
+              data: {
+                by_name: {
+                  'tool-activity': ToolActivityTimeline,
+                },
+              },
+            }}
+          />
           {isRunning && <GeneratingState />}
           <MessagePrimitive.Error>
             <div className="message-error" role="alert">
@@ -99,9 +109,17 @@ function GeneratingState() {
       (part) => part.type === 'text' && part.text.length > 0,
     ),
   )
+  const hasToolActivity = useAuiState((state) =>
+    state.message.parts.some(
+      (part) => part.type === 'data' && part.name === 'tool-activity',
+    ),
+  )
 
   if (hasText) {
     return <span className="streaming-caret" aria-label="正在生成" />
+  }
+  if (hasToolActivity) {
+    return null
   }
 
   return (

@@ -127,7 +127,12 @@ class ConversationPersistenceIT {
                 run.agentId(),
                 1,
                 now,
-                new RunEvent.RunStarted("fast", "user-1")
+                new RunEvent.RunStarted(
+                        "fast",
+                        "user-1",
+                        "assistant-1",
+                        "TAVILY"
+                )
         ));
         checkpointStore.save(run.id(), "{\"state\":\"ready\"}");
         runStore.complete(run.id());

@@ -17,6 +17,8 @@ import {
   updateConversation,
   type ImportedConversation,
 } from '../api/conversations'
+import { getRunActivities } from '../api/chat'
+import type { RunActivityData } from '../types/tool-activity'
 
 const indexedDb = createStore('deep-explore', 'assistant-ui')
 const migrationMarker = 'deep-explore:server-migration:v1'
@@ -48,7 +50,16 @@ class ServerHistoryAdapter implements ThreadHistoryAdapter {
     const remoteId = this.getAui().threadListItem.getState().remoteId
     if (!remoteId) return { messages: [] }
 
-    const repository = await getConversationMessages(remoteId)
+    const [repository, runActivities] = await Promise.all([
+      getConversationMessages(remoteId),
+      getRunActivities(remoteId).catch(() => []),
+    ])
+    const activityByMessageId = new Map<string, RunActivityData>()
+    for (const activity of runActivities) {
+      if (activity.assistantMessageId) {
+        activityByMessageId.set(activity.assistantMessageId, activity)
+      }
+    }
     return {
       headId: repository.headId,
       messages: repository.messages.map((stored) => ({
@@ -66,7 +77,18 @@ class ServerHistoryAdapter implements ThreadHistoryAdapter {
             : {
                 id: stored.id,
                 role: 'assistant' as const,
-                content: [{ type: 'text' as const, text: stored.content }],
+                content: [
+                  ...(activityByMessageId.has(stored.id)
+                    ? [
+                        {
+                          type: 'data' as const,
+                          name: 'tool-activity',
+                          data: activityByMessageId.get(stored.id)!,
+                        },
+                      ]
+                    : []),
+                  { type: 'text' as const, text: stored.content },
+                ],
                 status:
                   stored.status === 'COMPLETE'
                     ? ({ type: 'complete', reason: 'unknown' } as const)

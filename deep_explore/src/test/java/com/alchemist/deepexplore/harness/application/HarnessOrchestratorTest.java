@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -13,7 +14,10 @@ import static org.mockito.Mockito.when;
 import com.alchemist.deepexplore.agent.application.AgentExecutorRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionRequest;
+import com.alchemist.deepexplore.agent.domain.AgentMessage;
+import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
+import com.alchemist.deepexplore.agent.domain.WebSearchProvider;
 import com.alchemist.deepexplore.agent.spi.AgentExecutor;
 import com.alchemist.deepexplore.conversation.domain.Conversation;
 import com.alchemist.deepexplore.conversation.port.ConversationLock;
@@ -26,6 +30,7 @@ import com.alchemist.deepexplore.harness.port.RunEventStore;
 import com.alchemist.deepexplore.harness.port.RunStore;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +46,7 @@ class HarnessOrchestratorTest {
     private final RunEventStore eventStore = mock(RunEventStore.class);
     private final CheckpointStore checkpointStore = mock(CheckpointStore.class);
     private final FakeAgentExecutor executor = new FakeAgentExecutor();
+    private final List<String> cleanupOrder = new ArrayList<>();
     private HarnessOrchestrator orchestrator;
 
     @BeforeEach
@@ -62,6 +68,11 @@ class HarnessOrchestratorTest {
                         invocation.getArgument(1),
                         Instant.EPOCH
                 ));
+        doAnswer(invocation -> {
+            cleanupOrder.add("lock");
+            return null;
+        }).when(conversationLock).release(anyString());
+        executor.onRelease = () -> cleanupOrder.add("executor");
         orchestrator = new HarnessOrchestrator(
                 new AgentExecutorRegistry(List.of(executor)),
                 conversationStore,
@@ -73,7 +84,9 @@ class HarnessOrchestratorTest {
                         checkpointStore,
                         messageStore
                 ),
-                Duration.ofMinutes(5)
+                new AgentExecutionEventMapper(),
+                Duration.ofMinutes(5),
+                20
         );
     }
 
@@ -99,6 +112,7 @@ class HarnessOrchestratorTest {
         verify(runStore).complete(anyString());
         verify(conversationLock).release("conversation-1");
         assertThat(executor.released).isTrue();
+        assertThat(cleanupOrder).containsExactly("executor", "lock");
     }
 
     @Test
@@ -138,6 +152,7 @@ class HarnessOrchestratorTest {
                 .verifyComplete();
 
         assertThat(executor.prepared).isFalse();
+        assertThat(executor.released).isFalse();
         verify(conversationLock, never()).release(anyString());
     }
 
@@ -155,7 +170,33 @@ class HarnessOrchestratorTest {
                 .verifyComplete();
 
         assertThat(executor.replay).isTrue();
-        assertThat(executor.rewindHead).isEqualTo("parent-1");
+        verify(messageStore).branch("conversation-1", "parent-1", 20);
+    }
+
+    @Test
+    void passesTaskSearchProviderToExecutor() {
+        executor.events = Flux.just(new AgentExecutionEvent.Completed(
+                "searched",
+                "model-a",
+                10
+        ));
+        StartRunCommand command = new StartRunCommand(
+                "conversation-1",
+                "hello",
+                "assistant",
+                "fast",
+                "user-1",
+                "parent-1",
+                "assistant-1",
+                WebSearchProvider.TAVILY
+        );
+
+        StepVerifier.create(orchestrator.start(command))
+                .expectNextCount(2)
+                .verifyComplete();
+
+        assertThat(executor.lastRequest.searchProvider())
+                .isEqualTo(WebSearchProvider.TAVILY);
     }
 
     @Test
@@ -189,9 +230,12 @@ class HarnessOrchestratorTest {
         private Flux<AgentExecutionEvent> events = Flux.empty();
         private boolean prepared;
         private boolean replay;
-        private String rewindHead;
+        private List<AgentMessage> history = List.of();
         private volatile boolean restored;
         private boolean released;
+        private Runnable onRelease = () -> {
+        };
+        private AgentExecutionRequest lastRequest;
 
         @Override
         public String agentId() {
@@ -204,19 +248,16 @@ class HarnessOrchestratorTest {
         }
 
         @Override
-        public AgentStateSnapshot prepare(
-                String conversationId,
-                boolean replay,
-                String rewindHeadMessageId
-        ) {
+        public AgentStateSnapshot prepare(AgentPreparationRequest request) {
             this.prepared = true;
-            this.replay = replay;
-            this.rewindHead = rewindHeadMessageId;
+            this.replay = request.rebuildMemory();
+            this.history = request.history();
             return new AgentStateSnapshot("[{\"stable\":true}]");
         }
 
         @Override
         public Flux<AgentExecutionEvent> execute(AgentExecutionRequest request) {
+            lastRequest = request;
             return events;
         }
 
@@ -228,6 +269,7 @@ class HarnessOrchestratorTest {
         @Override
         public void release(String conversationId) {
             released = true;
+            onRelease.run();
         }
     }
 }

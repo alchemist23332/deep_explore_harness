@@ -1,8 +1,11 @@
 package com.alchemist.deepexplore.agent.adapter.langchain4j;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchRoutingContext;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionRequest;
+import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
+import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
 import com.alchemist.deepexplore.agent.spi.AgentExecutor;
 import com.alchemist.deepexplore.config.AiModelProperties;
@@ -21,9 +24,6 @@ import reactor.core.publisher.Flux;
 @Component
 public class LangChain4jAgentExecutor implements AgentExecutor {
 
-    public static final String FAST_PROFILE = "fast";
-    public static final String DEEP_PROFILE = "deep";
-
     private static final Logger log =
             LoggerFactory.getLogger(LangChain4jAgentExecutor.class);
 
@@ -32,19 +32,26 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     private final StreamingAssistant deepAssistant;
     private final AiModelProperties modelProperties;
     private final LangChain4jMemoryManager memoryManager;
+    private final WebSearchRoutingContext webSearchRoutingContext;
+    private final int maxEventResultCharacters;
 
     public LangChain4jAgentExecutor(
             @Value("${ai.agent.id:assistant}") String agentId,
             @Qualifier("fastStreamingAssistant") StreamingAssistant fastAssistant,
             @Qualifier("deepStreamingAssistant") StreamingAssistant deepAssistant,
             AiModelProperties modelProperties,
-            LangChain4jMemoryManager memoryManager
+            LangChain4jMemoryManager memoryManager,
+            WebSearchRoutingContext webSearchRoutingContext,
+            @Value("${tools.web-search.max-event-result-characters:16384}")
+            int maxEventResultCharacters
     ) {
         this.agentId = agentId;
         this.fastAssistant = fastAssistant;
         this.deepAssistant = deepAssistant;
         this.modelProperties = modelProperties;
         this.memoryManager = memoryManager;
+        this.webSearchRoutingContext = webSearchRoutingContext;
+        this.maxEventResultCharacters = maxEventResultCharacters;
     }
 
     @Override
@@ -58,16 +65,8 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     }
 
     @Override
-    public AgentStateSnapshot prepare(
-            String conversationId,
-            boolean replay,
-            String rewindHeadMessageId
-    ) {
-        return memoryManager.prepare(
-                conversationId,
-                replay,
-                rewindHeadMessageId
-        );
+    public AgentStateSnapshot prepare(AgentPreparationRequest request) {
+        return memoryManager.prepare(request);
     }
 
     @Override
@@ -84,6 +83,7 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
             AtomicReference<StreamingHandle> handle = new AtomicReference<>();
             sink.onCancel(() -> {
                 if (active.compareAndSet(true, false)) {
+                    webSearchRoutingContext.clear(request.conversationId());
                     StreamingHandle streamingHandle = handle.get();
                     if (streamingHandle != null) {
                         streamingHandle.cancel();
@@ -92,6 +92,10 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
             });
 
             try {
+                webSearchRoutingContext.bind(
+                        request.conversationId(),
+                        request.searchProvider()
+                );
                 TokenStream stream = assistantFor(request.profileId())
                         .chat(request.conversationId(), request.message());
                 stream.onPartialResponseWithContext((partial, context) -> {
@@ -102,10 +106,32 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                                 ));
                             }
                         })
+                        .onPartialToolCallWithContext((partial, context) ->
+                                handle.compareAndSet(null, context.streamingHandle()))
+                        .beforeToolExecution(tool -> {
+                            if (active.get()) {
+                                sink.next(new AgentExecutionEvent.ToolCallStarted(
+                                        tool.request().id(),
+                                        tool.request().name(),
+                                        truncate(tool.request().arguments())
+                                ));
+                            }
+                        })
+                        .onToolExecuted(tool -> {
+                            if (active.get()) {
+                                sink.next(new AgentExecutionEvent.ToolCallCompleted(
+                                        tool.request().id(),
+                                        tool.request().name(),
+                                        truncate(tool.result()),
+                                        !tool.hasFailed()
+                                ));
+                            }
+                        })
                         .onCompleteResponse(response -> {
                             if (!active.compareAndSet(true, false)) {
                                 return;
                             }
+                            webSearchRoutingContext.clear(request.conversationId());
                             sink.next(new AgentExecutionEvent.Completed(
                                     response.aiMessage().text(),
                                     modelName(request.profileId()),
@@ -117,6 +143,7 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                             if (!active.compareAndSet(true, false)) {
                                 return;
                             }
+                            webSearchRoutingContext.clear(request.conversationId());
                             log.error(
                                     "Model call failed for run {}",
                                     request.runId(),
@@ -131,6 +158,7 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                         .start();
             } catch (RuntimeException error) {
                 if (active.compareAndSet(true, false)) {
+                    webSearchRoutingContext.clear(request.conversationId());
                     log.error("Unable to start model run {}", request.runId(), error);
                     sink.next(new AgentExecutionEvent.Failed(
                             "MODEL_START_FAILED",
@@ -149,23 +177,32 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
 
     @Override
     public void release(String conversationId) {
+        webSearchRoutingContext.clear(conversationId);
         fastAssistant.evictChatMemory(conversationId);
         deepAssistant.evictChatMemory(conversationId);
     }
 
     private StreamingAssistant assistantFor(String profileId) {
-        return DEEP_PROFILE.equalsIgnoreCase(profileId)
+        return AgentProfile.DEEP.id().equalsIgnoreCase(profileId)
                 ? deepAssistant
                 : fastAssistant;
     }
 
     private String modelName(String profileId) {
-        return DEEP_PROFILE.equalsIgnoreCase(profileId)
+        return AgentProfile.DEEP.id().equalsIgnoreCase(profileId)
                 ? modelProperties.resolvedDeepModelName()
                 : modelProperties.modelName();
     }
 
     private static Integer totalTokens(TokenUsage tokenUsage) {
         return tokenUsage == null ? null : tokenUsage.totalTokenCount();
+    }
+
+    private String truncate(String value) {
+        if (value == null || value.length() <= maxEventResultCharacters) {
+            return value;
+        }
+        return value.substring(0, maxEventResultCharacters)
+                + "\n...[truncated for run event]";
     }
 }

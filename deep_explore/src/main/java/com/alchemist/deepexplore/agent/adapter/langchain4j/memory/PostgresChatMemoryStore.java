@@ -3,6 +3,7 @@ package com.alchemist.deepexplore.agent.adapter.langchain4j.memory;
 import static dev.langchain4j.data.message.ChatMessageDeserializer.messagesFromJson;
 import static dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson;
 
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,6 +42,7 @@ public class PostgresChatMemoryStore implements PersistentChatMemoryStore {
 
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
+        List<ChatMessage> persistentMessages = messagesForPersistence(messages);
         jdbcTemplate.update("""
                 INSERT INTO conversation_memory (
                     conversation_id, messages_json, version, updated_at
@@ -50,7 +52,7 @@ public class PostgresChatMemoryStore implements PersistentChatMemoryStore {
                 SET messages_json = EXCLUDED.messages_json,
                     version = conversation_memory.version + 1,
                     updated_at = CURRENT_TIMESTAMP
-                """, memoryId.toString(), messagesToJson(messages));
+                """, memoryId.toString(), messagesToJson(persistentMessages));
     }
 
     @Override
@@ -59,5 +61,22 @@ public class PostgresChatMemoryStore implements PersistentChatMemoryStore {
                 DELETE FROM conversation_memory
                 WHERE conversation_id = ?
                 """, memoryId.toString());
+    }
+
+    static List<ChatMessage> messagesForPersistence(
+            List<ChatMessage> messages
+    ) {
+        return messages.stream()
+                .map(message -> {
+                    if (message instanceof AiMessage aiMessage
+                            && !aiMessage.hasToolExecutionRequests()
+                            && aiMessage.thinking() != null) {
+                        return (ChatMessage) aiMessage.toBuilder()
+                                .thinking(null)
+                                .build();
+                    }
+                    return message;
+                })
+                .toList();
     }
 }

@@ -1,6 +1,15 @@
 import { useAuiState } from '@assistant-ui/react'
-import { BrainCircuit, Menu, Moon, Sun, Zap } from 'lucide-react'
+import {
+  BrainCircuit,
+  Menu,
+  Moon,
+  PanelRightClose,
+  PanelRightOpen,
+  Sun,
+  Zap,
+} from 'lucide-react'
 import { useWorkspace } from '../../runtime/workspace-context'
+import { useSandboxWorkspace } from '../../runtime/sandbox-workspace-context'
 
 export function AppHeader({ onOpenSidebar }: { onOpenSidebar: () => void }) {
   const title = useAuiState(
@@ -14,6 +23,11 @@ export function AppHeader({ onOpenSidebar }: { onOpenSidebar: () => void }) {
     toggleTheme,
   } = useWorkspace()
   const model = mode === 'FAST' ? config?.fastModel : config?.deepModel
+  const {
+    panelOpen,
+    setPanelOpen,
+    setPanelMaximized,
+  } = useSandboxWorkspace()
 
   return (
     <header className="workspace-header">
@@ -39,15 +53,35 @@ export function AppHeader({ onOpenSidebar }: { onOpenSidebar: () => void }) {
         </div>
       </div>
 
-      <button
-        type="button"
-        className="icon-button"
-        onClick={toggleTheme}
-        aria-label={theme === 'light' ? '切换到深色主题' : '切换到浅色主题'}
-        title={theme === 'light' ? '深色主题' : '浅色主题'}
-      >
-        {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-      </button>
+      <div className="header-actions">
+        <button
+          type="button"
+          className={`icon-button ${panelOpen ? 'active' : ''}`}
+          onClick={() => {
+            setPanelMaximized(false)
+            setPanelOpen(!panelOpen)
+          }}
+          aria-label={panelOpen ? '关闭工作区' : '打开工作区'}
+          title={panelOpen ? '关闭工作区' : '打开工作区'}
+        >
+          {panelOpen ? (
+            <PanelRightClose size={18} />
+          ) : (
+            <PanelRightOpen size={18} />
+          )}
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={toggleTheme}
+          aria-label={
+            theme === 'light' ? '切换到深色主题' : '切换到浅色主题'
+          }
+          title={theme === 'light' ? '深色主题' : '浅色主题'}
+        >
+          {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+        </button>
+      </div>
     </header>
   )
 }

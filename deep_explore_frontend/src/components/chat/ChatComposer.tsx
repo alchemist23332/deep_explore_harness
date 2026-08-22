@@ -3,11 +3,17 @@ import {
   ComposerPrimitive,
   useAuiState,
 } from '@assistant-ui/react'
-import { SendHorizontal, Square } from 'lucide-react'
+import { Globe2, SendHorizontal, Square } from 'lucide-react'
 import { useWorkspace } from '../../runtime/workspace-context'
 
 export function ChatComposer() {
-  const { mode, setMode, config } = useWorkspace()
+  const {
+    mode,
+    setMode,
+    searchProvider,
+    setSearchProvider,
+    config,
+  } = useWorkspace()
   const isRunning = useAuiState((state) => state.thread.isRunning)
   const inputLength = useAuiState(
     (state) => state.thread.composer.text.length,
@@ -42,6 +48,35 @@ export function ChatComposer() {
                 disabled={isRunning}
               >
                 深度
+              </button>
+            </div>
+            <div className="provider-selector" aria-label="网页搜索服务">
+              <button
+                type="button"
+                className={searchProvider === 'JINA' ? 'active' : undefined}
+                onClick={() => setSearchProvider('JINA')}
+                disabled={
+                  isRunning ||
+                  !config?.availableSearchProviders.includes('JINA')
+                }
+                aria-pressed={searchProvider === 'JINA'}
+                title="使用 Jina Search"
+              >
+                <Globe2 size={12} />
+                Jina
+              </button>
+              <button
+                type="button"
+                className={searchProvider === 'TAVILY' ? 'active' : undefined}
+                onClick={() => setSearchProvider('TAVILY')}
+                disabled={
+                  isRunning ||
+                  !config?.availableSearchProviders.includes('TAVILY')
+                }
+                aria-pressed={searchProvider === 'TAVILY'}
+                title="使用 Tavily Search"
+              >
+                Tavily
               </button>
             </div>
             <span className="active-model" title={model ?? undefined}>

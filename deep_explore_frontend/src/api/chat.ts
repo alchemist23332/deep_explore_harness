@@ -1,10 +1,36 @@
-export type ChatEventType = 'metadata' | 'delta' | 'done' | 'error'
+import type {
+  RunActivityData,
+  ToolActivityStatus,
+} from '../types/tool-activity'
+
+export type ChatEventType =
+  | 'metadata'
+  | 'delta'
+  | 'tool_start'
+  | 'tool_end'
+  | 'approval_required'
+  | 'artifact'
+  | 'done'
+  | 'error'
 export type AgentMode = 'FAST' | 'DEEP'
+export type SearchProvider = 'JINA' | 'TAVILY'
 
 export interface ChatEvent {
   type: ChatEventType
   conversationId: string
   content: string
+  runId: string | null
+  sequence: number | null
+  occurredAt: string | null
+  assistantMessageId: string | null
+  tool: {
+    toolCallId: string
+    toolName: string
+    displayName: string
+    status: ToolActivityStatus
+    summary: string
+    provider: string | null
+  } | null
 }
 
 export interface ChatRequest {
@@ -14,12 +40,16 @@ export interface ChatRequest {
   userMessageId: string | null
   userParentMessageId: string | null
   assistantMessageId: string | null
+  searchProvider: SearchProvider
 }
 
 export interface RuntimeConfig {
   provider: string
   fastModel: string
   deepModel: string
+  webSearchEnabled: boolean
+  defaultSearchProvider: SearchProvider
+  availableSearchProviders: SearchProvider[]
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -89,6 +119,18 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+export async function getRunActivities(
+  conversationId: string,
+): Promise<RunActivityData[]> {
+  const response = await fetch(
+    `${apiBaseUrl}/api/conversations/${conversationId}/run-activities`,
+  )
+  if (!response.ok) {
+    throw new Error('无法读取执行过程')
+  }
+  return response.json() as Promise<RunActivityData[]>
 }
 
 function parseEvent(block: string): ChatEvent | null {
