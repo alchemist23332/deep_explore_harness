@@ -38,7 +38,7 @@ public class SystemPromptRenderer {
 
     private final SystemPromptCatalog catalog;
     private final List<SystemPromptContributor> contributors;
-    private final Map<AgentProfile, String> cache = new ConcurrentHashMap<>();
+    private final Map<CacheKey, String> cache = new ConcurrentHashMap<>();
 
     public SystemPromptRenderer(
             SystemPromptCatalog catalog,
@@ -49,18 +49,31 @@ public class SystemPromptRenderer {
     }
 
     public String render(AgentProfile profile) {
+        return render(profile, PromptContext.DEFAULT);
+    }
+
+    public String render(AgentProfile profile, PromptContext context) {
         if (profile == null) {
             throw new IllegalArgumentException("Agent profile must not be null");
         }
-        return cache.computeIfAbsent(profile, this::renderUncached);
+        PromptContext resolvedContext = context == null
+                ? PromptContext.DEFAULT
+                : context;
+        return cache.computeIfAbsent(
+                new CacheKey(profile, resolvedContext),
+                this::renderUncached
+        );
     }
 
-    private String renderUncached(AgentProfile profile) {
+    private String renderUncached(CacheKey key) {
+        AgentProfile profile = key.profile();
         List<PromptFragment> fragments = new ArrayList<>();
         fragments.add(CORE);
         fragments.add(PROFILES.get(profile));
         for (SystemPromptContributor contributor : contributors) {
-            fragments.addAll(contributor.fragments(profile));
+            if (contributor.supports(key.context())) {
+                fragments.addAll(contributor.fragments(profile));
+            }
         }
         validateUniqueIds(fragments);
         fragments.sort(
@@ -98,5 +111,11 @@ public class SystemPromptRenderer {
 
     private static String indent(String content) {
         return "  " + content.replace("\n", "\n  ");
+    }
+
+    private record CacheKey(
+            AgentProfile profile,
+            PromptContext context
+    ) {
     }
 }

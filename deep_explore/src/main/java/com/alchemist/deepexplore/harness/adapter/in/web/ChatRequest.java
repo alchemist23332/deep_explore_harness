@@ -12,11 +12,42 @@ public record ChatRequest(
         @Size(max = 100) String userMessageId,
         @Size(max = 100) String userParentMessageId,
         @Size(max = 100) String assistantMessageId,
-        WebSearchProvider searchProvider
+        WebSearchProvider searchProvider,
+        @Size(max = 100) String workspaceId
 ) {
 
     public ChatRequest(String conversationId, String message) {
-        this(conversationId, message, AgentProfile.FAST, null, null, null, null);
+        this(
+                conversationId,
+                message,
+                AgentProfile.FAST,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    public ChatRequest(
+            String conversationId,
+            String message,
+            AgentProfile mode,
+            String userMessageId,
+            String userParentMessageId,
+            String assistantMessageId,
+            WebSearchProvider searchProvider
+    ) {
+        this(
+                conversationId,
+                message,
+                mode,
+                userMessageId,
+                userParentMessageId,
+                assistantMessageId,
+                searchProvider,
+                null
+        );
     }
 
     public ChatRequest {

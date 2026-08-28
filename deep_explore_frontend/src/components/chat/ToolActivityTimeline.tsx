@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleX,
+  FolderOpen,
   ListChecks,
   LoaderCircle,
   Search,
   Wrench,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useSandboxWorkspace } from '../../runtime/sandbox-workspace-context'
 import type {
   RunActivityData,
   ToolActivity,
@@ -22,6 +24,11 @@ export function ToolActivityTimeline({
   data,
 }: DataMessagePartProps<RunActivityData>) {
   const activity = data as RunActivityData
+  const {
+    setActiveTab,
+    setActiveWorkspaceId,
+    setPanelOpen,
+  } = useSandboxWorkspace()
   const isMessageRunning = useAuiState(
     (state) => state.message.status?.type === 'running',
   )
@@ -55,6 +62,20 @@ export function ToolActivityTimeline({
       </summary>
 
       <div className="tool-activity-list">
+        {activity.workspaceId && (
+          <button
+            type="button"
+            className="tool-activity-workspace"
+            onClick={() => {
+              setActiveWorkspaceId(activity.workspaceId)
+              setActiveTab('files')
+              setPanelOpen(true)
+            }}
+          >
+            <FolderOpen size={14} />
+            打开关联工作区
+          </button>
+        )}
         {activity.tools.map((tool: ToolActivity) => (
           <ToolActivityRow key={tool.toolCallId} tool={tool} />
         ))}

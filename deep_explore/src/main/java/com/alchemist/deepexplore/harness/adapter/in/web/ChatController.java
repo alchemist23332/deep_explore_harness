@@ -1,7 +1,7 @@
 package com.alchemist.deepexplore.harness.adapter.in.web;
 
-import com.alchemist.deepexplore.harness.application.ChatCommand;
-import com.alchemist.deepexplore.harness.application.ChatStreamService;
+import com.alchemist.deepexplore.harness.application.command.ChatCommand;
+import com.alchemist.deepexplore.harness.application.command.ChatStreamService;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.http.MediaType;
@@ -49,7 +49,8 @@ public class ChatController {
                         request.userMessageId(),
                         request.userParentMessageId(),
                         request.assistantMessageId(),
-                        request.searchProvider()
+                        request.searchProvider(),
+                        request.workspaceId()
                 )
         );
         String provider = stream.searchProvider().name();

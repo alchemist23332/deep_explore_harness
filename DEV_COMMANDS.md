@@ -55,7 +55,7 @@ curl http://localhost:8080/api/config
 
 前端和后端使用 `Ctrl+C` 停止。
 
-## 本地 Java 沙箱
+## 本地 Fullstack 沙箱
 
 当前开发环境使用 Homebrew Docker CLI + Colima。首次安装：
 
@@ -76,18 +76,21 @@ source ./scripts/docker-env.sh
 ./scripts/docker-runtime.sh reset
 ```
 
-然后在项目根目录构建 Java 21 沙箱镜像：
+然后在项目根目录构建 Fullstack 沙箱镜像：
 
 ```bash
 docker build \
-  -t deep-explore/sandbox-java21:v1 \
+  -t deep-explore/sandbox-fullstack:v1 \
   sandbox/java21
 ```
+
+镜像包含 Java 21、Maven、Node.js 22、npm、pnpm、tmux 和 ripgrep。
+新建工作区默认使用 TypeScript/Vite 模板，也可选择 Java Maven 或空模板。
 
 后端启动后访问：
 
 ```text
-http://127.0.0.1:5173/workspaces
+http://127.0.0.1:5173/chat
 ```
 
 工作区文件持久化在被 Git 忽略的 `.deep-explore-data/workspaces/`。容器停止或
@@ -95,12 +98,17 @@ http://127.0.0.1:5173/workspaces
 
 ```bash
 # 检查沙箱镜像和容器
-docker image inspect deep-explore/sandbox-java21:v1
+source ./scripts/docker-env.sh
+docker image inspect deep-explore/sandbox-fullstack:v1
 docker ps -a --filter label=deep-explore.managed=true
 
 # 查看本地工作区数据
 find .deep-explore-data/workspaces -maxdepth 3 -type f
 ```
+
+Web Preview 固定监听容器内 `0.0.0.0:3000`，Docker 将其映射到宿主机
+`127.0.0.1` 的随机端口。Agent 使用 `start_preview` 启动长期进程，前端
+“预览”Tab 会通过 iframe 展示返回的本地 URL。
 
 ## Web Search Provider
 

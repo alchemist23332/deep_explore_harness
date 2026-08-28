@@ -9,11 +9,11 @@ import { WorkbenchSandboxProvider } from './runtime/WorkbenchSandboxProvider'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <DeepExploreRuntimeProvider>
-        <WorkbenchSandboxProvider>
+      <WorkbenchSandboxProvider>
+        <DeepExploreRuntimeProvider>
           <App />
-        </WorkbenchSandboxProvider>
-      </DeepExploreRuntimeProvider>
+        </DeepExploreRuntimeProvider>
+      </WorkbenchSandboxProvider>
     </BrowserRouter>
   </StrictMode>,
 )

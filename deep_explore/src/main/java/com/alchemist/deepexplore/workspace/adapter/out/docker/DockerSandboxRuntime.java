@@ -1,11 +1,13 @@
 package com.alchemist.deepexplore.workspace.adapter.out.docker;
 
 import com.alchemist.deepexplore.workspace.application.WorkspaceOperationException;
-import com.alchemist.deepexplore.workspace.application.WorkspaceProperties;
+import com.alchemist.deepexplore.workspace.config.PreviewProperties;
+import com.alchemist.deepexplore.workspace.config.WorkspaceProperties;
 import com.alchemist.deepexplore.workspace.domain.CommandResult;
 import com.alchemist.deepexplore.workspace.domain.RuntimeProfile;
 import com.alchemist.deepexplore.workspace.domain.Workspace;
 import com.alchemist.deepexplore.workspace.port.SandboxRuntime;
+import com.alchemist.deepexplore.workspace.port.WorkspaceVolumeProvider;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.ExecCreateCmdResponse;
@@ -13,14 +15,15 @@ import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
+import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Ports;
 import com.github.dockerjava.api.model.StreamType;
 import com.github.dockerjava.api.model.Volume;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -33,18 +36,25 @@ import org.springframework.stereotype.Component;
 @Component
 public class DockerSandboxRuntime implements SandboxRuntime {
 
+    private static final String RUNTIME_VERSION = "2";
     private static final Logger log =
             LoggerFactory.getLogger(DockerSandboxRuntime.class);
 
     private final WorkspaceProperties properties;
+    private final PreviewProperties previewProperties;
     private final DockerClient docker;
+    private final WorkspaceVolumeProvider volumes;
 
     public DockerSandboxRuntime(
             WorkspaceProperties properties,
-            DockerClientManager dockerClientManager
+            PreviewProperties previewProperties,
+            DockerClientManager dockerClientManager,
+            WorkspaceVolumeProvider volumes
     ) {
         this.properties = properties;
+        this.previewProperties = previewProperties;
         this.docker = dockerClientManager.client();
+        this.volumes = volumes;
     }
 
     @Override
@@ -86,34 +96,63 @@ public class DockerSandboxRuntime implements SandboxRuntime {
     }
 
     @Override
-    public RuntimeInstance start(
-            Workspace workspace,
-            Path filesDirectory,
-            Path mavenCacheDirectory
-    ) {
+    public RuntimeInstance start(Workspace workspace) {
         requireAvailable();
+        WorkspaceVolumeProvider.WorkspaceVolume volume = volumes.volume(
+                workspace.id()
+        );
         String containerId = workspace.containerId();
         if (containerId != null && containerExists(containerId)) {
             var inspection = docker.inspectContainerCmd(containerId).exec();
-            if (!Boolean.TRUE.equals(inspection.getState().getRunning())) {
-                docker.startContainerCmd(containerId).exec();
+            Map<String, String> labels = inspection.getConfig().getLabels();
+            if (labels != null
+                    && RUNTIME_VERSION.equals(
+                            labels.get("deep-explore.runtime-version")
+                    )) {
+                if (!Boolean.TRUE.equals(inspection.getState().getRunning())) {
+                    docker.startContainerCmd(containerId).exec();
+                }
+                return new RuntimeInstance(containerId);
             }
-            return new RuntimeInstance(containerId);
+            docker.removeContainerCmd(containerId)
+                    .withForce(true)
+                    .exec();
         }
 
+        ExposedPort previewPort = ExposedPort.tcp(
+                previewProperties.containerPort()
+        );
+        Ports portBindings = new Ports();
+        portBindings.bind(
+                previewPort,
+                Ports.Binding.bindIp(previewProperties.host())
+        );
         HostConfig hostConfig = HostConfig.newHostConfig()
                 .withBinds(
                         new Bind(
-                                filesDirectory.toString(),
+                                volume.filesDirectory().toString(),
                                 new Volume("/workspace"),
                                 AccessMode.rw
                         ),
                         new Bind(
-                                mavenCacheDirectory.toString(),
+                                volume.mavenCacheDirectory().toString(),
                                 new Volume("/home/agent/.m2"),
+                                AccessMode.rw
+                        ),
+                        new Bind(
+                                volume.npmCacheDirectory().toString(),
+                                new Volume("/home/agent/.npm"),
+                                AccessMode.rw
+                        ),
+                        new Bind(
+                                volume.pnpmCacheDirectory().toString(),
+                                new Volume(
+                                        "/home/agent/.local/share/pnpm/store"
+                                ),
                                 AccessMode.rw
                         )
                 )
+                .withPortBindings(portBindings)
                 .withMemory(properties.docker().memoryBytes())
                 .withNanoCPUs(properties.docker().nanoCpus())
                 .withPidsLimit(properties.docker().pidsLimit())
@@ -128,11 +167,13 @@ public class DockerSandboxRuntime implements SandboxRuntime {
                     ))
                     .withName("deep-explore-sandbox-" + workspace.id())
                     .withHostConfig(hostConfig)
+                    .withExposedPorts(previewPort)
                     .withUser("1000:1000")
                     .withWorkingDir("/workspace")
                     .withLabels(Map.of(
                             "deep-explore.managed", "true",
-                            "deep-explore.workspace-id", workspace.id()
+                            "deep-explore.workspace-id", workspace.id(),
+                            "deep-explore.runtime-version", RUNTIME_VERSION
                     ))
                     .withCmd(
                             "/bin/bash",
@@ -266,7 +307,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
 
     private String imageFor(RuntimeProfile profile) {
         return switch (profile) {
-            case JAVA_21 -> properties.docker().java21Image();
+            case FULLSTACK -> properties.docker().fullstackImage();
         };
     }
 

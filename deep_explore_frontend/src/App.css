@@ -508,6 +508,26 @@
   background: var(--surface);
 }
 
+.tool-activity-workspace {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  gap: 7px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  background: var(--surface-muted);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.tool-activity-workspace:hover {
+  background: var(--surface-hover);
+}
+
 .tool-activity-row {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
@@ -1451,7 +1471,8 @@
 }
 
 .workspace-files-view,
-.workspace-terminal-view {
+.workspace-terminal-view,
+.workspace-preview-view {
   position: absolute;
   inset: 0;
   display: none;
@@ -1460,7 +1481,8 @@
 }
 
 .workspace-files-view[data-active="true"],
-.workspace-terminal-view[data-active="true"] {
+.workspace-terminal-view[data-active="true"],
+.workspace-preview-view[data-active="true"] {
   display: grid;
 }
 
@@ -1879,6 +1901,108 @@
 
 .xterm-terminal-host .xterm-viewport {
   scrollbar-color: #484f58 #0d1117;
+}
+
+.workspace-preview-view {
+  grid-template-rows: 36px minmax(0, 1fr);
+  background: #eef2f7;
+}
+
+.workspace-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 7px 0 11px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.workspace-preview-toolbar > div {
+  display: flex;
+  gap: 2px;
+}
+
+.preview-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.preview-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.preview-state.running {
+  color: var(--success);
+}
+
+.preview-state.running i {
+  background: var(--success);
+}
+
+.preview-state.starting {
+  color: var(--warning);
+}
+
+.preview-state.starting i {
+  background: var(--warning);
+}
+
+.preview-state.failed {
+  color: var(--danger);
+}
+
+.preview-state.failed i {
+  background: var(--danger);
+}
+
+.workspace-preview-content {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-preview-content iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #ffffff;
+}
+
+.workspace-preview-empty {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  color: var(--text-muted);
+}
+
+.workspace-preview-empty strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workspace-preview-logs {
+  position: absolute;
+  inset: auto 0 0;
+  max-height: 42%;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-top: 1px solid #30363d;
+  color: #c9d1d9;
+  background: rgba(13, 17, 23, 0.97);
+  font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
 }
 
 .embedded-sandbox-empty {

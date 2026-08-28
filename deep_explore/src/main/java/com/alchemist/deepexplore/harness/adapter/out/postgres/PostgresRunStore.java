@@ -25,14 +25,16 @@ public class PostgresRunStore implements RunStore {
     public AgentRun create(AgentRun run) {
         jdbcTemplate.update("""
                 INSERT INTO agent_runs (
-                    id, conversation_id, user_message_id, assistant_message_id,
-                    agent_id, profile_id, status, error_code, error_message,
-                    created_at, started_at, completed_at
+                    id, conversation_id, workspace_id, user_message_id,
+                    assistant_message_id, agent_id, profile_id, status,
+                    error_code, error_message, created_at, started_at,
+                    completed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 run.id(),
                 run.conversationId(),
+                run.workspaceId(),
                 run.userMessageId(),
                 run.assistantMessageId(),
                 run.agentId(),
@@ -51,8 +53,8 @@ public class PostgresRunStore implements RunStore {
     public Optional<AgentRun> find(String runId) {
         return jdbcTemplate.query("""
                         SELECT id, conversation_id, user_message_id,
-                               assistant_message_id, agent_id, profile_id,
-                               status, error_code, error_message,
+                               workspace_id, assistant_message_id, agent_id,
+                               profile_id, status, error_code, error_message,
                                created_at, started_at, completed_at
                         FROM agent_runs
                         WHERE id = ?
@@ -66,8 +68,8 @@ public class PostgresRunStore implements RunStore {
     public List<AgentRun> listByConversation(String conversationId) {
         return jdbcTemplate.query("""
                         SELECT id, conversation_id, user_message_id,
-                               assistant_message_id, agent_id, profile_id,
-                               status, error_code, error_message,
+                               workspace_id, assistant_message_id, agent_id,
+                               profile_id, status, error_code, error_message,
                                created_at, started_at, completed_at
                         FROM agent_runs
                         WHERE conversation_id = ?
@@ -117,6 +119,7 @@ public class PostgresRunStore implements RunStore {
         return new AgentRun(
                 resultSet.getString("id"),
                 resultSet.getString("conversation_id"),
+                resultSet.getString("workspace_id"),
                 resultSet.getString("user_message_id"),
                 resultSet.getString("assistant_message_id"),
                 resultSet.getString("agent_id"),

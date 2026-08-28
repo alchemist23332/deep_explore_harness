@@ -6,6 +6,7 @@ public record WorkspaceFile(
         String path,
         String content,
         long size,
-        Instant modifiedAt
+        Instant modifiedAt,
+        String revision
 ) {
 }

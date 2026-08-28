@@ -3,10 +3,10 @@ package com.alchemist.deepexplore.harness.adapter.in.web;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.alchemist.deepexplore.harness.application.RunActivityQueryService;
-import com.alchemist.deepexplore.harness.application.RunActivityQueryService.RunActivityView;
-import com.alchemist.deepexplore.harness.application.RunActivityQueryService.ToolActivityView;
-import com.alchemist.deepexplore.harness.application.ToolStatus;
+import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService;
+import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService.RunActivityView;
+import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService.ToolActivityView;
+import com.alchemist.deepexplore.harness.application.query.ToolStatus;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -21,6 +21,7 @@ class RunActivityControllerTest {
                 new RunActivityView(
                         "run-1",
                         "assistant-1",
+                        "workspace-1",
                         "COMPLETED",
                         List.of(new ToolActivityView(
                                 "tool-1",
@@ -44,6 +45,7 @@ class RunActivityControllerTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$[0].runId").isEqualTo("run-1")
+                .jsonPath("$[0].workspaceId").isEqualTo("workspace-1")
                 .jsonPath("$[0].tools[0].status").isEqualTo("SUCCEEDED")
                 .jsonPath("$[0].tools[0].durationMs").isEqualTo(2_000);
     }

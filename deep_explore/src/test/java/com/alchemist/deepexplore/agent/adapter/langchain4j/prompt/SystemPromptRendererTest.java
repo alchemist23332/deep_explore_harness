@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchPromptContributor;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
+import com.alchemist.deepexplore.coding.adapter.in.langchain4j.CodingPromptContributor;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.DefaultResourceLoader;
@@ -52,6 +53,28 @@ class SystemPromptRendererTest {
                 .isLessThan(prompt.indexOf("<tool_policy"));
         assertThat(occurrences(prompt, "<tool_policy name=\"web_search\">"))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void includesCodingPolicyOnlyForWorkspaceRuns() {
+        SystemPromptRenderer renderer = new SystemPromptRenderer(
+                catalog,
+                List.of(new CodingPromptContributor())
+        );
+
+        String regular = renderer.render(AgentProfile.FAST);
+        String coding = renderer.render(
+                AgentProfile.FAST,
+                new PromptContext(true)
+        );
+
+        assertThat(regular).doesNotContain("<coding_workspace");
+        assertThat(coding)
+                .contains("<coding_workspace version=\"1\">")
+                .contains("run_command")
+                .contains("apply_patch")
+                .contains("start_preview")
+                .contains("0.0.0.0:3000");
     }
 
     @Test

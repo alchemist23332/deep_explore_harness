@@ -3,6 +3,7 @@ import {
   FileCode2,
   Maximize2,
   Minimize2,
+  MonitorPlay,
   Play,
   Plus,
   RefreshCw,
@@ -22,9 +23,11 @@ import {
   stopWorkspace,
   type RuntimeOverview,
   type SandboxWorkspace,
+  type StarterTemplate,
 } from '../../api/workspaces'
 import { WorkspaceFilesView } from '../workspace/WorkspaceFilesView'
 import { WorkspaceTerminalView } from '../workspace/WorkspaceTerminalView'
+import { WorkspacePreviewView } from '../workspace/WorkspacePreviewView'
 import { useSandboxWorkspace } from '../../runtime/sandbox-workspace-context'
 
 export function SandboxPanel() {
@@ -34,6 +37,7 @@ export function SandboxPanel() {
     setPanelOpen,
     activeWorkspaceId,
     setActiveWorkspaceId,
+    conversationWorkspaceId,
     activeTab,
     setActiveTab,
   } = useSandboxWorkspace()
@@ -41,7 +45,9 @@ export function SandboxPanel() {
   const [runtime, setRuntime] = useState<RuntimeOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
-  const [newName, setNewName] = useState('Java Workspace')
+  const [newName, setNewName] = useState('Web Workspace')
+  const [newTemplate, setNewTemplate] =
+    useState<StarterTemplate>('WEB_TYPESCRIPT')
   const [lifecycleBusy, setLifecycleBusy] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [commandRunning, setCommandRunning] = useState(false)
@@ -104,13 +110,34 @@ export function SandboxPanel() {
     setActiveWorkspaceId(workspaceId)
   }
 
+  useEffect(() => {
+    if (
+      !conversationWorkspaceId ||
+      conversationWorkspaceId === activeWorkspaceId ||
+      dirty ||
+      !workspaces.some(
+        (workspace) => workspace.id === conversationWorkspaceId,
+      )
+    ) {
+      return
+    }
+    setActiveWorkspaceId(conversationWorkspaceId)
+  }, [
+    activeWorkspaceId,
+    conversationWorkspaceId,
+    dirty,
+    setActiveWorkspaceId,
+    workspaces,
+  ])
+
   const create = async () => {
     try {
-      const created = await createWorkspace(newName)
+      const created = await createWorkspace(newName, newTemplate)
       setWorkspaces((current) => [created, ...current])
       setActiveWorkspaceId(created.id)
       setCreateOpen(false)
-      setNewName('Java Workspace')
+      setNewName('Web Workspace')
+      setNewTemplate('WEB_TYPESCRIPT')
       if (runtime?.available) {
         setLifecycleBusy(true)
         try {
@@ -332,6 +359,16 @@ export function SandboxPanel() {
           <Terminal size={14} />
           终端
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'preview'}
+          className={activeTab === 'preview' ? 'active' : ''}
+          onClick={() => setActiveTab('preview')}
+        >
+          <MonitorPlay size={14} />
+          预览
+        </button>
         {activeWorkspace && (
           <span className="sandbox-runtime-label">
             {activeWorkspace.runtimeProfile} ·{' '}
@@ -369,11 +406,15 @@ export function SandboxPanel() {
               }
               onCommandRunningChange={setCommandRunning}
             />
+            <WorkspacePreviewView
+              workspaceId={activeWorkspace.id}
+              active={activeTab === 'preview'}
+            />
           </>
         ) : (
           <div className="embedded-sandbox-empty">
             <FileCode2 size={24} />
-            <strong>创建 Java 工作区</strong>
+            <strong>创建 Fullstack 工作区</strong>
             <button
               type="button"
               className="button primary"
@@ -392,7 +433,7 @@ export function SandboxPanel() {
           <Dialog.Content className="dialog-content">
             <Dialog.Title>新建沙箱工作区</Dialog.Title>
             <Dialog.Description>
-              创建持久化的 Java 21 项目目录和隔离运行环境。
+              创建持久化项目目录和隔离运行环境。
             </Dialog.Description>
             <input
               className="dialog-input"
@@ -404,6 +445,22 @@ export function SandboxPanel() {
               }}
               autoFocus
             />
+            <select
+              className="dialog-input"
+              value={newTemplate}
+              onChange={(event) =>
+                setNewTemplate(
+                  event.target.value as StarterTemplate,
+                )
+              }
+              aria-label="项目模板"
+            >
+              <option value="WEB_TYPESCRIPT">
+                Web TypeScript
+              </option>
+              <option value="JAVA_MAVEN">Java Maven</option>
+              <option value="EMPTY">空白项目</option>
+            </select>
             <div className="dialog-actions">
               <Dialog.Close asChild>
                 <button type="button" className="button secondary">

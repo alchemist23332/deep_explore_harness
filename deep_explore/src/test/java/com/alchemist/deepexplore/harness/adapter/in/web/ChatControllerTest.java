@@ -8,9 +8,9 @@ import static org.mockito.Mockito.when;
 
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.WebSearchProvider;
-import com.alchemist.deepexplore.harness.application.ChatCommand;
-import com.alchemist.deepexplore.harness.application.ChatStreamService;
-import com.alchemist.deepexplore.harness.application.ToolActivityFormatter;
+import com.alchemist.deepexplore.harness.application.command.ChatCommand;
+import com.alchemist.deepexplore.harness.application.command.ChatStreamService;
+import com.alchemist.deepexplore.harness.application.query.ToolActivityFormatter;
 import com.alchemist.deepexplore.harness.domain.RunEvent;
 import com.alchemist.deepexplore.harness.domain.RunEventEnvelope;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -74,7 +74,8 @@ class ChatControllerTest {
                         "user-2",
                         "assistant-1",
                         "assistant-2",
-                        WebSearchProvider.TAVILY
+                        WebSearchProvider.TAVILY,
+                        "workspace-1"
                 ))
                 .exchange()
                 .expectStatus().isOk();
@@ -90,6 +91,8 @@ class ChatControllerTest {
                 .isEqualTo("assistant-2");
         assertThat(command.getValue().searchProvider())
                 .isEqualTo(WebSearchProvider.TAVILY);
+        assertThat(command.getValue().workspaceId())
+                .isEqualTo("workspace-1");
     }
 
     private static ChatStreamService.ChatStream stream(RunEvent... events) {

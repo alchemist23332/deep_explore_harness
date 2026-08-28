@@ -1,7 +1,7 @@
 package com.alchemist.deepexplore.harness.adapter.in.web;
 
-import com.alchemist.deepexplore.harness.application.ToolActivityFormatter;
-import com.alchemist.deepexplore.harness.application.ToolStatus;
+import com.alchemist.deepexplore.harness.application.query.ToolActivityFormatter;
+import com.alchemist.deepexplore.harness.application.query.ToolStatus;
 import com.alchemist.deepexplore.harness.domain.RunEvent;
 import com.alchemist.deepexplore.harness.domain.RunEventEnvelope;
 import org.springframework.stereotype.Component;
@@ -48,6 +48,7 @@ public class ChatEventPresenter {
             case RunEvent.ToolCallCompleted tool -> {
                 String summary = toolFormatter.completedSummary(
                         tool.toolName(),
+                        tool.result(),
                         tool.success()
                 );
                 yield event(

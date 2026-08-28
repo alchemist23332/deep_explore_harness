@@ -33,6 +33,7 @@ export function XtermTerminal({
   const terminal = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)
   const socket = useRef<WebSocket | null>(null)
+  const connectionEpoch = useRef(0)
   const disposed = useRef(false)
   const connecting = useRef(false)
   const activeRef = useRef(active)
@@ -46,6 +47,8 @@ export function XtermTerminal({
     const host = container.current
     if (!host) return
     disposed.current = false
+    connecting.current = false
+    setStatus('idle')
     const nextTerminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -91,6 +94,9 @@ export function XtermTerminal({
 
     return () => {
       disposed.current = true
+      connectionEpoch.current += 1
+      connecting.current = false
+      onConnectionBusyChange(false)
       observer.disconnect()
       input.dispose()
       resize.dispose()
@@ -100,7 +106,7 @@ export function XtermTerminal({
       terminal.current = null
       fitAddon.current = null
     }
-  }, [workspaceId])
+  }, [onConnectionBusyChange, workspaceId])
 
   useEffect(() => {
     if (terminal.current) {
@@ -117,20 +123,26 @@ export function XtermTerminal({
     }
     const term = terminal.current
     if (!term) return
+    const epoch = connectionEpoch.current + 1
+    connectionEpoch.current = epoch
     connecting.current = true
     onConnectionBusyChange(true)
     setStatus('starting')
     term.writeln('\x1b[38;5;250mStarting sandbox terminal...\x1b[0m')
     try {
       await onEnsureRunning()
-      if (disposed.current) return
+      if (disposed.current || connectionEpoch.current !== epoch) return
       setStatus('connecting')
       const nextSocket = new WebSocket(workspaceTerminalUrl(workspaceId))
       nextSocket.binaryType = 'arraybuffer'
       socket.current = nextSocket
 
       nextSocket.onopen = () => {
-        if (disposed.current) {
+        if (
+          disposed.current ||
+          connectionEpoch.current !== epoch ||
+          socket.current !== nextSocket
+        ) {
           nextSocket.close()
           return
         }
@@ -150,6 +162,12 @@ export function XtermTerminal({
         })
       }
       nextSocket.onmessage = (event) => {
+        if (
+          connectionEpoch.current !== epoch ||
+          socket.current !== nextSocket
+        ) {
+          return
+        }
         if (typeof event.data === 'string') {
           handleControlMessage(term, event.data, setStatus)
           return
@@ -167,12 +185,24 @@ export function XtermTerminal({
         }
       }
       nextSocket.onerror = () => {
+        if (
+          connectionEpoch.current !== epoch ||
+          socket.current !== nextSocket
+        ) {
+          return
+        }
         setStatus('error')
         term.writeln(
           '\r\n\x1b[1;31mTerminal connection failed.\x1b[0m',
         )
       }
       nextSocket.onclose = () => {
+        if (
+          connectionEpoch.current !== epoch ||
+          socket.current !== nextSocket
+        ) {
+          return
+        }
         socket.current = null
         connecting.current = false
         onConnectionBusyChange(false)
@@ -184,6 +214,7 @@ export function XtermTerminal({
         }
       }
     } catch (error) {
+      if (disposed.current || connectionEpoch.current !== epoch) return
       connecting.current = false
       onConnectionBusyChange(false)
       setStatus('error')
@@ -202,12 +233,23 @@ export function XtermTerminal({
     if (status === 'idle') void connect()
   }, [active, connect, status])
 
-  const reconnect = () => {
-    socket.current?.close()
+  const reconnect = async () => {
+    const reconnectEpoch = connectionEpoch.current + 1
+    connectionEpoch.current = reconnectEpoch
+    const previousSocket = socket.current
     socket.current = null
-    connecting.current = false
+    connecting.current = true
+    onConnectionBusyChange(true)
     terminal.current?.clear()
-    setStatus('idle')
+    setStatus('connecting')
+    await closeWebSocket(previousSocket)
+    if (
+      disposed.current ||
+      connectionEpoch.current !== reconnectEpoch
+    ) {
+      return
+    }
+    connecting.current = false
     void connect()
   }
 
@@ -222,8 +264,12 @@ export function XtermTerminal({
           <button
             type="button"
             className="icon-button compact"
-            disabled={lifecycleBusy || status === 'starting'}
-            onClick={reconnect}
+            disabled={
+              lifecycleBusy ||
+              status === 'starting' ||
+              status === 'connecting'
+            }
+            onClick={() => void reconnect()}
             title="重新连接终端"
             aria-label="重新连接终端"
           >
@@ -251,6 +297,22 @@ export function XtermTerminal({
       />
     </section>
   )
+}
+
+function closeWebSocket(socket: WebSocket | null): Promise<void> {
+  if (!socket || socket.readyState === WebSocket.CLOSED) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.clearTimeout(timeout)
+      socket.removeEventListener('close', finish)
+      resolve()
+    }
+    const timeout = window.setTimeout(finish, 1_000)
+    socket.addEventListener('close', finish, { once: true })
+    socket.close()
+  })
 }
 
 function handleControlMessage(

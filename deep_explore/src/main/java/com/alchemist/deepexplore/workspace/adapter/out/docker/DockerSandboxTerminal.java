@@ -19,6 +19,14 @@ import reactor.core.publisher.Sinks;
 @Component
 public class DockerSandboxTerminal implements SandboxTerminal {
 
+    private static final List<String> TERMINAL_ENVIRONMENT = List.of(
+            "TERM=xterm-256color",
+            "COLORTERM=truecolor",
+            "HOME=/home/agent",
+            "PROMPT_DIRTRIM=4",
+            "PS1=\\[\\e[1;36m\\]\\w\\[\\e[0m\\] \\$ "
+    );
+
     private final DockerClient docker;
 
     public DockerSandboxTerminal(DockerClientManager dockerClientManager) {
@@ -46,11 +54,7 @@ public class DockerSandboxTerminal implements SandboxTerminal {
                     .withAttachStderr(true)
                     .withTty(true)
                     .withWorkingDir(workingDirectory)
-                    .withEnv(List.of(
-                            "TERM=xterm-256color",
-                            "COLORTERM=truecolor",
-                            "HOME=/home/agent"
-                    ))
+                    .withEnv(TERMINAL_ENVIRONMENT)
                     .withCmd(
                             "/bin/bash",
                             "--noprofile",

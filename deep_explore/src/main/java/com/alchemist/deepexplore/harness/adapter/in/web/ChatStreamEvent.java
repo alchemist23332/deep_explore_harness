@@ -1,6 +1,6 @@
 package com.alchemist.deepexplore.harness.adapter.in.web;
 
-import com.alchemist.deepexplore.harness.application.ToolStatus;
+import com.alchemist.deepexplore.harness.application.query.ToolStatus;
 import java.time.Instant;
 
 public record ChatStreamEvent(

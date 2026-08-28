@@ -26,6 +26,7 @@ export interface ToolActivity {
 export interface RunActivityData {
   runId: string
   assistantMessageId: string | null
+  workspaceId: string | null
   status: RunActivityStatus
   tools: ToolActivity[]
 }

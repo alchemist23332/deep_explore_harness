@@ -33,9 +33,18 @@ ai:
     log-responses: ${AI_LOG_RESPONSES:false}
   agent:
     id: ${AI_AGENT_ID:assistant}
-    max-tool-calling-round-trips: ${AGENT_MAX_TOOL_CALLING_ROUND_TRIPS:3}
+    max-tool-calling-round-trips: ${AGENT_MAX_TOOL_CALLING_ROUND_TRIPS:24}
 
 tools:
+  coding:
+    enabled: ${CODING_TOOLS_ENABLED:true}
+    max-tool-calls: ${CODING_MAX_TOOL_CALLS:50}
+    max-mutation-calls: ${CODING_MAX_MUTATION_CALLS:10}
+    max-command-calls: ${CODING_MAX_COMMAND_CALLS:5}
+    max-read-characters: ${CODING_MAX_READ_CHARACTERS:12000}
+    max-search-characters: ${CODING_MAX_SEARCH_CHARACTERS:12000}
+    max-search-results: ${CODING_MAX_SEARCH_RESULTS:200}
+    max-command-result-characters: ${CODING_MAX_COMMAND_RESULT_CHARACTERS:20000}
   web-search:
     enabled: ${WEB_SEARCH_ENABLED:false}
     default-provider: ${WEB_SEARCH_PROVIDER:TAVILY}
@@ -65,9 +74,16 @@ sandbox:
   max-zip-bytes: ${SANDBOX_MAX_ZIP_BYTES:104857600}
   max-extracted-bytes: ${SANDBOX_MAX_EXTRACTED_BYTES:524288000}
   max-extracted-files: ${SANDBOX_MAX_EXTRACTED_FILES:10000}
+  preview:
+    enabled: ${SANDBOX_PREVIEW_ENABLED:true}
+    container-port: ${SANDBOX_PREVIEW_PORT:3000}
+    host: ${SANDBOX_PREVIEW_HOST:127.0.0.1}
+    startup-timeout: ${SANDBOX_PREVIEW_STARTUP_TIMEOUT:30s}
+    health-timeout: ${SANDBOX_PREVIEW_HEALTH_TIMEOUT:2s}
+    max-log-characters: ${SANDBOX_PREVIEW_MAX_LOG_CHARACTERS:32768}
   docker:
     host: ${SANDBOX_DOCKER_HOST:${DOCKER_HOST:unix:///var/run/docker.sock}}
-    java21-image: ${SANDBOX_JAVA21_IMAGE:deep-explore/sandbox-java21:v1}
+    fullstack-image: ${SANDBOX_FULLSTACK_IMAGE:deep-explore/sandbox-fullstack:v1}
     memory-bytes: ${SANDBOX_MEMORY_BYTES:2147483648}
     nano-cpus: ${SANDBOX_NANO_CPUS:2000000000}
     pids-limit: ${SANDBOX_PIDS_LIMIT:256}

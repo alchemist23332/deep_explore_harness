@@ -1,7 +1,7 @@
 package com.alchemist.deepexplore.harness.adapter.in.web;
 
-import com.alchemist.deepexplore.harness.application.RunActivityQueryService;
-import com.alchemist.deepexplore.harness.application.RunActivityQueryService.RunActivityView;
+import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService;
+import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService.RunActivityView;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

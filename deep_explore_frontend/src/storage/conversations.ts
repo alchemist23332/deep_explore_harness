@@ -18,12 +18,18 @@ import {
   type ImportedConversation,
 } from '../api/conversations'
 import { getRunActivities } from '../api/chat'
+import { useSandboxWorkspace } from '../runtime/sandbox-workspace-context'
 import type { RunActivityData } from '../types/tool-activity'
 
 const indexedDb = createStore('deep-explore', 'assistant-ui')
 const migrationMarker = 'deep-explore:server-migration:v1'
 const messageConversationIds = new Map<string, string>()
 let pendingInitializedConversationId: string | null = null
+const projectWorkspaceTools = new Set([
+  'write_file',
+  'apply_patch',
+  'start_preview',
+])
 
 export function resolveConversationId(
   messageId: string | undefined,
@@ -41,19 +47,35 @@ export function resolveConversationId(
 
 class ServerHistoryAdapter implements ThreadHistoryAdapter {
   private readonly getAui: () => ReturnType<typeof useAui>
+  private readonly onWorkspaceResolved: (
+    workspaceId: string | null,
+  ) => void
 
-  constructor(getAui: () => ReturnType<typeof useAui>) {
+  constructor(
+    getAui: () => ReturnType<typeof useAui>,
+    onWorkspaceResolved: (workspaceId: string | null) => void,
+  ) {
     this.getAui = getAui
+    this.onWorkspaceResolved = onWorkspaceResolved
   }
 
   async load() {
     const remoteId = this.getAui().threadListItem.getState().remoteId
-    if (!remoteId) return { messages: [] }
+    if (!remoteId) {
+      this.onWorkspaceResolved(null)
+      return { messages: [] }
+    }
 
     const [repository, runActivities] = await Promise.all([
       getConversationMessages(remoteId),
       getRunActivities(remoteId).catch(() => []),
     ])
+    const workspaceId = resolveProjectWorkspace(runActivities)
+    if (
+      this.getAui().threadListItem.getState().remoteId === remoteId
+    ) {
+      this.onWorkspaceResolved(workspaceId)
+    }
     const activityByMessageId = new Map<string, RunActivityData>()
     for (const activity of runActivities) {
       if (activity.assistantMessageId) {
@@ -124,13 +146,34 @@ class ServerHistoryAdapter implements ThreadHistoryAdapter {
   }
 }
 
+function resolveProjectWorkspace(runActivities: RunActivityData[]) {
+  const projectRun = runActivities.findLast(
+    (activity) =>
+      activity.workspaceId &&
+      activity.tools.some((tool) =>
+        projectWorkspaceTools.has(tool.toolName),
+      ),
+  )
+  return (
+    projectRun?.workspaceId ??
+    runActivities.findLast((activity) => activity.workspaceId)
+      ?.workspaceId ??
+    null
+  )
+}
+
 function ServerHistoryProvider({ children }: PropsWithChildren) {
   const aui = useAui()
+  const { setConversationWorkspaceId } = useSandboxWorkspace()
   const auiRef = useRef(aui)
   auiRef.current = aui
   const history = useMemo(
-    () => new ServerHistoryAdapter(() => auiRef.current),
-    [],
+    () =>
+      new ServerHistoryAdapter(
+        () => auiRef.current,
+        setConversationWorkspaceId,
+      ),
+    [setConversationWorkspaceId],
   )
 
   const providerProps = { adapters: { history }, children }

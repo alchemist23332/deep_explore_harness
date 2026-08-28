@@ -2,8 +2,8 @@ package com.alchemist.deepexplore.harness.adapter.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.alchemist.deepexplore.harness.application.ToolActivityFormatter;
-import com.alchemist.deepexplore.harness.application.ToolStatus;
+import com.alchemist.deepexplore.harness.application.query.ToolActivityFormatter;
+import com.alchemist.deepexplore.harness.application.query.ToolStatus;
 import com.alchemist.deepexplore.harness.domain.RunEvent;
 import com.alchemist.deepexplore.harness.domain.RunEventEnvelope;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +52,40 @@ class ChatEventPresenterTest {
         assertThat(completed.content())
                 .isEqualTo("搜索完成，正在整理结果")
                 .doesNotContain("raw result");
+    }
+
+    @Test
+    void exposesCodingDescriptionAndStructuredResultSummary() {
+        ChatStreamEvent started = presenter.present(
+                envelope(
+                        1,
+                        new RunEvent.ToolCallStarted(
+                                "tool-1",
+                                "read_file",
+                                "{\"description\":\"检查应用入口\","
+                                        + "\"path\":\"src/App.java\"}"
+                        )
+                ),
+                null
+        );
+        ChatStreamEvent completed = presenter.present(
+                envelope(
+                        2,
+                        new RunEvent.ToolCallCompleted(
+                                "tool-1",
+                                "read_file",
+                                "{\"ok\":true,\"summary\":"
+                                        + "\"Read src/App.java\"}",
+                                true
+                        )
+                ),
+                null
+        );
+
+        assertThat(started.tool().displayName()).isEqualTo("读取文件");
+        assertThat(started.tool().summary()).isEqualTo("检查应用入口");
+        assertThat(completed.tool().summary())
+                .isEqualTo("Read src/App.java");
     }
 
     private static RunEventEnvelope envelope(long sequence, RunEvent event) {

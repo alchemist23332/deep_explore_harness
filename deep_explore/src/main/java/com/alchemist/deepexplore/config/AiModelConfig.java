@@ -4,9 +4,12 @@ import java.util.Map;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.StreamingAssistant;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.PromptContext;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.SystemPromptRenderer;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchToolAdapter;
+import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
+import com.alchemist.deepexplore.coding.adapter.in.langchain4j.CodingToolProvider;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.AiServices;
@@ -47,6 +50,8 @@ public class AiModelConfig {
             LangChain4jMemoryManager chatMemoryManager,
             SystemPromptRenderer systemPromptRenderer,
             ObjectProvider<WebSearchToolAdapter> webSearchTool,
+            ObjectProvider<CodingToolProvider> codingToolProvider,
+            AgentInvocationContextRegistry invocationContexts,
             @Value("${ai.agent.max-tool-calling-round-trips:3}")
             int maxToolCallingRoundTrips
     ) {
@@ -55,6 +60,8 @@ public class AiModelConfig {
                 chatMemoryManager,
                 systemPromptRenderer,
                 webSearchTool.getIfAvailable(),
+                codingToolProvider.getIfAvailable(),
+                invocationContexts,
                 maxToolCallingRoundTrips,
                 AgentProfile.FAST
         );
@@ -66,6 +73,8 @@ public class AiModelConfig {
             LangChain4jMemoryManager chatMemoryManager,
             SystemPromptRenderer systemPromptRenderer,
             ObjectProvider<WebSearchToolAdapter> webSearchTool,
+            ObjectProvider<CodingToolProvider> codingToolProvider,
+            AgentInvocationContextRegistry invocationContexts,
             @Value("${ai.agent.max-tool-calling-round-trips:3}")
             int maxToolCallingRoundTrips
     ) {
@@ -74,6 +83,8 @@ public class AiModelConfig {
                 chatMemoryManager,
                 systemPromptRenderer,
                 webSearchTool.getIfAvailable(),
+                codingToolProvider.getIfAvailable(),
+                invocationContexts,
                 maxToolCallingRoundTrips,
                 AgentProfile.DEEP
         );
@@ -84,19 +95,31 @@ public class AiModelConfig {
             LangChain4jMemoryManager chatMemoryManager,
             SystemPromptRenderer systemPromptRenderer,
             WebSearchToolAdapter webSearchTool,
+            CodingToolProvider codingToolProvider,
+            AgentInvocationContextRegistry invocationContexts,
             int maxToolCallingRoundTrips,
             AgentProfile profile
     ) {
-        String systemPrompt = systemPromptRenderer.render(profile);
         AiServices<StreamingAssistant> builder = AiServices.builder(
                         StreamingAssistant.class
                 )
                 .streamingChatModel(model)
                 .chatMemoryProvider(chatMemoryManager::create)
-                .systemMessageProvider(ignored -> systemPrompt)
+                .systemMessageProviderWithContext(context ->
+                        systemPromptRenderer.render(
+                                profile,
+                                new PromptContext(
+                                        invocationContexts.isBound(
+                                                context.chatMemoryId()
+                                        )
+                                )
+                        ))
                 .maxToolCallingRoundTrips(maxToolCallingRoundTrips);
         if (webSearchTool != null) {
             builder.tools(webSearchTool);
+        }
+        if (codingToolProvider != null) {
+            builder.toolProvider(codingToolProvider);
         }
         return builder.build();
     }

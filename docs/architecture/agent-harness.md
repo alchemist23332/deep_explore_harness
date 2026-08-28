@@ -25,7 +25,9 @@ agent/
 
 harness/
   domain/                   Run, event, status, and checkpoint types
-  application/              Run lifecycle, chat facade, and activity queries
+  application/command/      Chat commands and streaming facade
+  application/execution/    Run orchestration, sessions, context, persistence
+  application/query/        Run activity and tool timeline queries
   adapter/in/web/           Chat SSE and Run activity HTTP APIs
   port/                     Run, event, and checkpoint persistence interfaces
   adapter/out/postgres/     PostgreSQL implementations
@@ -33,6 +35,10 @@ harness/
 runtime/
   application/              Sanitized runtime capability query
   adapter/in/web/           Runtime configuration HTTP API
+
+coding/
+  application/              Workspace-scoped coding operations and results
+  adapter/in/langchain4j/    Invocation-scoped Tool provider and prompt policy
 ```
 
 The dependency direction is:
@@ -41,6 +47,8 @@ The dependency direction is:
 Web -> Application -> Domain/Port <- Infrastructure Adapter
 Harness -> Agent SPI
 Harness -> Conversation Ports
+Coding -> Agent application context
+Coding -> Workspace application/ports
 Conversation -X-> Agent/Harness
 Agent -X-> Conversation
 Application -X-> Adapter
@@ -55,25 +63,34 @@ ArchUnit tests enforce these rules.
 1. `ChatController` maps the HTTP request to a framework-neutral `ChatCommand`.
 2. `ChatStreamService` resolves the Agent profile and task-level
    `searchProvider`, then delegates to `HarnessService`.
-3. `HarnessOrchestrator` creates an `AgentRun` and emits `RunStarted`.
-4. The Harness acquires the conversation lock and reads canonical conversation
-   history through Conversation ports.
+3. `ConversationContextLoader` opens the conversation and `RunFactory` creates
+   the `AgentRun` and `RunSession`; the Harness emits `RunStarted`.
+4. The Harness acquires the conversation lock, then
+   `ConversationContextLoader` reads canonical history through Conversation
+   ports.
 5. The Agent adapter prepares ChatMemory from the supplied history when needed,
    and the snapshot is persisted as a checkpoint.
 6. The user message is appended to complete conversation history.
 7. `AgentExecutorRegistry` selects an executor by `agentId`.
 8. `LangChain4jAgentExecutor` starts the AI Services ReAct loop.
-9. When required, the model calls the provider-neutral `web_search` Tool.
+9. When a Run carries a `workspaceId`, the Tool provider exposes
+   workspace-scoped coding and preview tools and adds the coding prompt
+   fragment. The provider is evaluated once per invocation because the
+   workspace binding does not change during a Run.
+10. When required, the model calls the provider-neutral `web_search` Tool.
    `@ToolMemoryId` routes the call to Jina or Tavily for this task, then
    LangChain4j stores the result in ChatMemory and invokes the model again.
-10. Tool and text events are converted to framework-neutral execution events.
+11. Tool and text events are converted to framework-neutral execution events.
     The HTTP facade emits sanitized `tool_start` and `tool_end` SSE payloads;
     raw arguments and results are not exposed to the browser.
-11. The Harness assigns ordered event sequence numbers and persists each event.
-12. `RunSession` owns terminal transitions, cancellation, checkpoint restore,
+12. The Harness assigns ordered event sequence numbers. Lifecycle, checkpoint,
+    tool, approval, and artifact events are persisted. High-volume
+    `TextDelta` events remain live SSE data; the complete assistant message is
+    committed transactionally when the Run completes.
+13. `RunSession` owns terminal transitions, cancellation, checkpoint restore,
     Executor cleanup, and ordered event envelopes.
-13. Completion writes the assistant message and closes the Run.
-14. Failure or cancellation restores the checkpoint. Executor state is
+14. Completion writes the assistant message and closes the Run.
+15. Failure or cancellation restores the checkpoint. Executor state is
     released before the conversation lock so the next Run cannot be cleared by
     a previous Run's cleanup.
 
@@ -91,6 +108,10 @@ compatibility facade were removed; new code depends on `ChatStreamService`,
 The frontend renders tool activity as an assistant-ui `data` message part.
 `GET /api/conversations/{conversationId}/run-activities` reconstructs the same
 sanitized timeline from persisted Run Events when conversation history reloads.
+Each activity also carries its persisted `workspaceId`. When a conversation is
+reopened, the workbench selects the most recent workspace used to modify or
+preview the project; each execution timeline also provides an explicit action
+to open its associated workspace.
 
 ## Persistence
 
@@ -113,6 +134,26 @@ single user message can produce multiple Runs when regenerated.
 latest branch to framework-neutral `AgentMessage` values. The LangChain4j
 adapter may persist provider-specific ChatMemory in `conversation_memory`, but
 it no longer reads Conversation stores directly.
+
+Each coding Run stores its nullable `workspace_id`. The Agent invocation
+context binds that Run to one workspace while it is active; Coding Tools never
+accept host paths and resolve all paths relative to that workspace. The
+binding is removed on completion, failure, cancellation, and executor release.
+
+## Coding Tools
+
+Coding runs expose `list_files`, `read_file`, `grep_search`, `write_file`,
+`apply_patch`, `run_command`, `start_preview`, `preview_status`,
+`preview_logs`, and `stop_preview`. File operations use `WorkspaceStorage`;
+finite commands execute only through the Docker-backed
+`WorkspaceCommandService`. Preview commands run in a managed tmux session and
+must listen on `0.0.0.0:3000`. Existing-file writes require the revision
+returned by `read_file`, while patch application uses `git apply --check`
+before mutation.
+
+Tool results returned to the model are structured and bounded. Run events keep
+only the tool summary and error code, avoiding persistence of source files and
+full command output.
 
 ## Prompt Composition
 
@@ -158,5 +199,9 @@ To add another model profile:
 - Resume endpoint based on checkpoints
 - Tool registry and approval API
 - Artifact storage
-- Batched persistence for high-volume text delta events
+- Human approval and resumable execution for destructive coding operations
+- Per-Run workspace change journal and rollback
+- Graph or multi-agent orchestration when deterministic workflow branching is
+  required
+- Optional resumable live-delta transport when reconnect support is required
 - OpenTelemetry traces and metrics

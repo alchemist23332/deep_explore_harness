@@ -1,7 +1,7 @@
 package com.alchemist.deepexplore.workspace.adapter.in.web;
 
-import com.alchemist.deepexplore.workspace.application.TerminalApplicationService;
-import com.alchemist.deepexplore.workspace.application.TerminalConnection;
+import com.alchemist.deepexplore.workspace.application.terminal.TerminalApplicationService;
+import com.alchemist.deepexplore.workspace.application.terminal.TerminalConnection;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;

@@ -6,4 +6,8 @@ import java.util.Collection;
 public interface SystemPromptContributor {
 
     Collection<PromptFragment> fragments(AgentProfile profile);
+
+    default boolean supports(PromptContext context) {
+        return true;
+    }
 }

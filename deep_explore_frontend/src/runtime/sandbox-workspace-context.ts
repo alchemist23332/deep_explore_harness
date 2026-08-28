@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-export type SandboxTab = 'files' | 'terminal'
+export type SandboxTab = 'files' | 'terminal' | 'preview'
 
 export interface SandboxWorkspaceContextValue {
   panelOpen: boolean
@@ -11,6 +11,8 @@ export interface SandboxWorkspaceContextValue {
   setPanelSize: (size: number) => void
   activeWorkspaceId: string | null
   setActiveWorkspaceId: (workspaceId: string | null) => void
+  conversationWorkspaceId: string | null
+  setConversationWorkspaceId: (workspaceId: string | null) => void
   activeTab: SandboxTab
   setActiveTab: (tab: SandboxTab) => void
   selectedFilePath: string | null

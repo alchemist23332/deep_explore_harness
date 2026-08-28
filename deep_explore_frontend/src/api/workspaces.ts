@@ -10,12 +10,31 @@ export type WorkspaceStatus =
 export interface SandboxWorkspace {
   id: string
   name: string
-  runtimeProfile: 'JAVA_21'
+  runtimeProfile: 'FULLSTACK'
   status: WorkspaceStatus
   lastError: string | null
   createdAt: string
   updatedAt: string
   lastStartedAt: string | null
+}
+
+export type StarterTemplate =
+  | 'WEB_TYPESCRIPT'
+  | 'JAVA_MAVEN'
+  | 'EMPTY'
+
+export type PreviewStatus =
+  | 'STOPPED'
+  | 'STARTING'
+  | 'RUNNING'
+  | 'FAILED'
+
+export interface WorkspacePreview {
+  status: PreviewStatus
+  url: string | null
+  containerPort: number
+  hostPort: number | null
+  logs: string
 }
 
 export interface RuntimeOverview {
@@ -42,6 +61,7 @@ export interface WorkspaceFile {
   content: string
   size: number
   modifiedAt: string
+  revision: string
 }
 
 export interface WorkspaceTreeNode {
@@ -78,11 +98,18 @@ export async function getWorkspace(workspaceId: string) {
   return request<SandboxWorkspace>(`/api/workspaces/${workspaceId}`)
 }
 
-export async function createWorkspace(name: string) {
+export async function createWorkspace(
+  name: string,
+  starterTemplate: StarterTemplate,
+) {
   return request<SandboxWorkspace>('/api/workspaces', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, runtimeProfile: 'JAVA_21' }),
+    body: JSON.stringify({
+      name,
+      runtimeProfile: 'FULLSTACK',
+      starterTemplate,
+    }),
   })
 }
 
@@ -180,11 +207,12 @@ export async function writeWorkspaceFile(
   workspaceId: string,
   path: string,
   content: string,
+  expectedRevision?: string,
 ) {
   return request<WorkspaceFile>(`/api/workspaces/${workspaceId}/file`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, content }),
+    body: JSON.stringify({ path, content, expectedRevision }),
   })
 }
 
@@ -226,6 +254,45 @@ export async function executeWorkspaceCommand(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command, workingDirectory }),
     },
+  )
+}
+
+export async function getWorkspacePreview(workspaceId: string) {
+  return request<WorkspacePreview>(
+    `/api/workspaces/${workspaceId}/preview`,
+  )
+}
+
+export async function startWorkspacePreview(
+  workspaceId: string,
+  command: string,
+  workingDirectory = '',
+  healthPath = '/',
+) {
+  return request<WorkspacePreview>(
+    `/api/workspaces/${workspaceId}/preview/start`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        command,
+        workingDirectory,
+        healthPath,
+      }),
+    },
+  )
+}
+
+export async function stopWorkspacePreview(workspaceId: string) {
+  return request<WorkspacePreview>(
+    `/api/workspaces/${workspaceId}/preview/stop`,
+    { method: 'POST' },
+  )
+}
+
+export async function getWorkspacePreviewLogs(workspaceId: string) {
+  return request<{ logs: string }>(
+    `/api/workspaces/${workspaceId}/preview/logs`,
   )
 }
 

@@ -15,6 +15,8 @@ import com.alchemist.deepexplore.harness.domain.AgentRun;
 import com.alchemist.deepexplore.harness.domain.RunEvent;
 import com.alchemist.deepexplore.harness.domain.RunEventEnvelope;
 import com.alchemist.deepexplore.harness.domain.RunStatus;
+import com.alchemist.deepexplore.workspace.adapter.out.postgres.PostgresWorkspaceStore;
+import com.alchemist.deepexplore.workspace.domain.RuntimeProfile;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import java.time.Duration;
@@ -65,6 +67,9 @@ class ConversationPersistenceIT {
     @Autowired
     PostgresCheckpointStore checkpointStore;
 
+    @Autowired
+    PostgresWorkspaceStore workspaceStore;
+
     @Test
     void persistsConversationHarnessAndMemoryState() {
         Conversation conversation =
@@ -106,9 +111,16 @@ class ConversationPersistenceIT {
         conversationLock.release(conversation.id());
 
         Instant now = Instant.now();
+        workspaceStore.create(
+                "workspace-1",
+                "local-user",
+                "Persistent workspace",
+                RuntimeProfile.FULLSTACK
+        );
         AgentRun run = runStore.create(new AgentRun(
                 "run-1",
                 conversation.id(),
+                "workspace-1",
                 "user-1",
                 "assistant-1",
                 "assistant",
@@ -151,7 +163,11 @@ class ConversationPersistenceIT {
                 .isEqualTo(1L);
         assertThat(runStore.find(run.id()))
                 .get()
-                .extracting(AgentRun::status)
-                .isEqualTo(RunStatus.COMPLETED);
+                .satisfies(storedRun -> {
+                    assertThat(storedRun.status())
+                            .isEqualTo(RunStatus.COMPLETED);
+                    assertThat(storedRun.workspaceId())
+                            .isEqualTo("workspace-1");
+                });
     }
 }

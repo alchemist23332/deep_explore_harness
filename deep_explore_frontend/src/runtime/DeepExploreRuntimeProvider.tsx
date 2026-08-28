@@ -27,6 +27,7 @@ import {
   type WorkspaceContextValue,
 } from './workspace-context'
 import { resolveConversationId } from '../storage/conversations'
+import { useSandboxWorkspace } from './sandbox-workspace-context'
 import type {
   RunActivityData,
   RunActivityStatus,
@@ -35,6 +36,7 @@ import type {
 } from '../types/tool-activity'
 
 export function DeepExploreRuntimeProvider({ children }: PropsWithChildren) {
+  const { activeWorkspaceId } = useSandboxWorkspace()
   const [mode, setMode] = useState<AgentMode>('FAST')
   const [searchProvider, setSearchProvider] =
     useState<SearchProvider>('TAVILY')
@@ -50,8 +52,10 @@ export function DeepExploreRuntimeProvider({ children }: PropsWithChildren) {
   const modeRef = useRef(mode)
   modeRef.current = mode
   const searchProviderRef = useRef(searchProvider)
+  const activeWorkspaceIdRef = useRef(activeWorkspaceId)
   const searchProviderInitialized = useRef(false)
   searchProviderRef.current = searchProvider
+  activeWorkspaceIdRef.current = activeWorkspaceId
 
   const chatModel = useMemo<ChatModelAdapter>(
     () => ({
@@ -96,6 +100,7 @@ export function DeepExploreRuntimeProvider({ children }: PropsWithChildren) {
                   : null,
               assistantMessageId: unstable_assistantMessageId ?? null,
               searchProvider: searchProviderRef.current,
+              workspaceId: activeWorkspaceIdRef.current,
             },
             abortSignal,
           )) {
@@ -109,6 +114,7 @@ export function DeepExploreRuntimeProvider({ children }: PropsWithChildren) {
                   event.assistantMessageId ??
                   unstable_assistantMessageId ??
                   null,
+                workspaceId: activeWorkspaceIdRef.current,
                 status: 'RUNNING',
                 tools: [],
               }
@@ -252,6 +258,7 @@ function ensureRunActivity(
     activity ?? {
       runId: runId ?? assistantMessageId ?? 'pending-run',
       assistantMessageId,
+      workspaceId: null,
       status: 'RUNNING',
       tools: [],
     }

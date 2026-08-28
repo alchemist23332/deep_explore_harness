@@ -41,6 +41,7 @@ export interface ChatRequest {
   userParentMessageId: string | null
   assistantMessageId: string | null
   searchProvider: SearchProvider
+  workspaceId: string | null
 }
 
 export interface RuntimeConfig {

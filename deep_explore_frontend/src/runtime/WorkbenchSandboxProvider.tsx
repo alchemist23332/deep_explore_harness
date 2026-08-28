@@ -38,9 +38,13 @@ export function WorkbenchSandboxProvider({
       searchParams.get('workspace') ??
       window.localStorage.getItem(storageKeys.activeWorkspace),
   )
+  const [conversationWorkspaceId, setConversationWorkspaceId] =
+    useState<string | null>(null)
   const [activeTab, setActiveTabState] = useState<SandboxTab>(() => {
     const saved = window.localStorage.getItem(storageKeys.activeTab)
-    return saved === 'terminal' ? 'terminal' : 'files'
+    return saved === 'terminal' || saved === 'preview'
+      ? saved
+      : 'files'
   })
   const [selectedFilePath, setSelectedFilePathState] = useState<
     string | null
@@ -100,6 +104,8 @@ export function WorkbenchSandboxProvider({
       setPanelSize,
       activeWorkspaceId,
       setActiveWorkspaceId,
+      conversationWorkspaceId,
+      setConversationWorkspaceId,
       activeTab,
       setActiveTab,
       selectedFilePath,
@@ -108,6 +114,7 @@ export function WorkbenchSandboxProvider({
     [
       activeTab,
       activeWorkspaceId,
+      conversationWorkspaceId,
       panelMaximized,
       panelOpen,
       panelSize,
