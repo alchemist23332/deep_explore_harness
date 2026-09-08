@@ -1,0 +1,3 @@
+ALTER TABLE agent_runs
+    ADD COLUMN version BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN last_event_sequence BIGINT NOT NULL DEFAULT 0;

@@ -2,11 +2,13 @@ package com.alchemist.deepexplore.harness.application.execution;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -62,7 +65,26 @@ class HarnessOrchestratorTest {
                         Instant.EPOCH,
                         Instant.EPOCH
                 ));
-        when(conversationLock.tryAcquire(anyString(), any())).thenReturn(true);
+        when(conversationLock.tryAcquire(anyString(), anyString(), any()))
+                .thenAnswer(invocation -> Optional.of(
+                        new ConversationLock.Lease(
+                                invocation.getArgument(0),
+                                invocation.getArgument(1),
+                                1
+                        )
+                ));
+        when(conversationLock.renew(any())).thenReturn(true);
+        when(conversationLock.release(any())).thenReturn(true);
+        when(runStore.complete(anyString(), anyLong())).thenReturn(true);
+        when(runStore.fail(
+                anyString(),
+                anyLong(),
+                anyString(),
+                anyString()
+        )).thenReturn(true);
+        when(runStore.cancel(anyString(), anyLong())).thenReturn(true);
+        when(eventStore.append(any())).thenAnswer(invocation ->
+                invocation.getArgument(0));
         when(checkpointStore.save(anyString(), anyString()))
                 .thenAnswer(invocation -> new RunCheckpoint(
                         invocation.getArgument(0),
@@ -72,8 +94,8 @@ class HarnessOrchestratorTest {
                 ));
         doAnswer(invocation -> {
             cleanupOrder.add("lock");
-            return null;
-        }).when(conversationLock).release(anyString());
+            return true;
+        }).when(conversationLock).release(any());
         executor.onRelease = () -> cleanupOrder.add("executor");
         RunPersistenceService persistence = new RunPersistenceService(
                 runStore,
@@ -121,7 +143,7 @@ class HarnessOrchestratorTest {
                         .isInstanceOf(RunEvent.RunCompleted.class))
                 .verifyComplete();
 
-        verify(runStore).complete(anyString());
+        verify(runStore).complete(anyString(), eq(0L));
         ArgumentCaptor<com.alchemist.deepexplore.harness.domain.AgentRun> run =
                 ArgumentCaptor.forClass(
                         com.alchemist.deepexplore.harness.domain.AgentRun.class
@@ -130,17 +152,17 @@ class HarnessOrchestratorTest {
         assertThat(run.getValue().workspaceId()).isEqualTo("workspace-1");
         assertThat(executor.lastRequest.workspaceId())
                 .isEqualTo("workspace-1");
-        verify(eventStore, never()).append(
+        verify(eventStore, atLeastOnce()).append(
                 org.mockito.ArgumentMatchers.argThat(event ->
                         event.event() instanceof RunEvent.TextDelta)
         );
-        verify(conversationLock).release("conversation-1");
+        verify(conversationLock).release(any(ConversationLock.Lease.class));
         assertThat(executor.released).isTrue();
         assertThat(cleanupOrder).containsExactly("executor", "lock");
     }
 
     @Test
-    void restoresSnapshotWhenExecutorFails() {
+    void invalidatesMemoryWhenExecutorFails() {
         executor.events = Flux.just(new AgentExecutionEvent.Failed(
                 "MODEL_FAILED",
                 "model failed"
@@ -156,14 +178,20 @@ class HarnessOrchestratorTest {
                         )))
                 .verifyComplete();
 
-        verify(runStore).fail(anyString(), eq("MODEL_FAILED"), eq("model failed"));
-        assertThat(executor.restored).isTrue();
-        verify(conversationLock).release("conversation-1");
+        verify(runStore).fail(
+                anyString(),
+                eq(0L),
+                eq("MODEL_FAILED"),
+                eq("model failed")
+        );
+        assertThat(executor.invalidated).isTrue();
+        verify(conversationLock).release(any(ConversationLock.Lease.class));
     }
 
     @Test
     void rejectsRunWhenConversationIsBusy() {
-        when(conversationLock.tryAcquire(anyString(), any())).thenReturn(false);
+        when(conversationLock.tryAcquire(anyString(), anyString(), any()))
+                .thenReturn(Optional.empty());
 
         StepVerifier.create(orchestrator.start(command()))
                 .assertNext(event -> assertThat(event.event())
@@ -177,7 +205,35 @@ class HarnessOrchestratorTest {
 
         assertThat(executor.prepared).isFalse();
         assertThat(executor.released).isFalse();
-        verify(conversationLock, never()).release(anyString());
+        verify(conversationLock, never()).release(any());
+    }
+
+    @Test
+    void rejectsCompletionAfterConversationLeaseIsLost() {
+        when(conversationLock.renew(any())).thenReturn(false);
+        executor.events = Flux.just(new AgentExecutionEvent.Completed(
+                "stale answer",
+                "model-a",
+                10
+        ));
+
+        StepVerifier.create(orchestrator.start(command()))
+                .assertNext(event -> assertThat(event.event())
+                        .isInstanceOf(RunEvent.RunStarted.class))
+                .assertNext(event -> assertThat(event.event())
+                        .isEqualTo(new RunEvent.RunFailed(
+                                "CONVERSATION_LEASE_LOST",
+                                "会话执行租约已失效，本轮生成已停止"
+                        )))
+                .verifyComplete();
+
+        verify(runStore, never()).complete(anyString(), anyLong());
+        verify(runStore).fail(
+                anyString(),
+                eq(0L),
+                eq("CONVERSATION_LEASE_LOST"),
+                anyString()
+        );
     }
 
     @Test
@@ -224,7 +280,7 @@ class HarnessOrchestratorTest {
     }
 
     @Test
-    void cancelsAndRestoresRunningExecution() {
+    void cancelsAndInvalidatesRunningExecution() {
         executor.events = Flux.never();
 
         StepVerifier.create(orchestrator.start(command()))
@@ -232,9 +288,10 @@ class HarnessOrchestratorTest {
                 .thenCancel()
                 .verify();
 
-        verify(runStore, timeout(1_000)).cancel(anyString());
-        assertThat(executor.restored).isTrue();
-        verify(conversationLock, timeout(1_000)).release("conversation-1");
+        verify(runStore, timeout(1_000)).cancel(anyString(), eq(0L));
+        assertThat(executor.invalidated).isTrue();
+        verify(conversationLock, timeout(1_000))
+                .release(any(ConversationLock.Lease.class));
     }
 
     private StartRunCommand command() {
@@ -257,7 +314,7 @@ class HarnessOrchestratorTest {
         private boolean prepared;
         private boolean replay;
         private List<AgentMessage> history = List.of();
-        private volatile boolean restored;
+        private volatile boolean invalidated;
         private boolean released;
         private Runnable onRelease = () -> {
         };
@@ -289,11 +346,22 @@ class HarnessOrchestratorTest {
 
         @Override
         public void restore(String conversationId, AgentStateSnapshot snapshot) {
-            restored = true;
         }
 
         @Override
-        public void release(String conversationId) {
+        public void invalidate(String conversationId) {
+            invalidated = true;
+        }
+
+        @Override
+        public void markMemorySynchronized(
+                String conversationId,
+                String sourceHeadMessageId
+        ) {
+        }
+
+        @Override
+        public void release(String conversationId, String runId) {
             released = true;
             onRelease.run();
         }

@@ -193,6 +193,31 @@ public class DockerSandboxRuntime implements SandboxRuntime {
     }
 
     @Override
+    public void pause(String containerId) {
+        ensureRunning(containerId);
+        try {
+            docker.pauseContainerCmd(containerId).exec();
+        } catch (RuntimeException error) {
+            throw dockerError("Unable to pause sandbox file access", error);
+        }
+    }
+
+    @Override
+    public void resume(String containerId) {
+        if (containerId == null || !containerExists(containerId)) {
+            throw new WorkspaceOperationException(
+                    "SANDBOX_RESUME_FAILED",
+                    "Sandbox disappeared while workspace files were in use"
+            );
+        }
+        try {
+            docker.unpauseContainerCmd(containerId).exec();
+        } catch (RuntimeException error) {
+            throw dockerError("Unable to resume sandbox file access", error);
+        }
+    }
+
+    @Override
     public void stop(String containerId) {
         if (containerId == null || !containerExists(containerId)) {
             return;

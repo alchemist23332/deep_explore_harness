@@ -3,11 +3,12 @@ package com.alchemist.deepexplore.agent.adapter.langchain4j;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchRoutingContext;
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
+import com.alchemist.deepexplore.agent.application.ToolDescriptorRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionRequest;
 import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
-import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
+import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
 import com.alchemist.deepexplore.agent.spi.AgentExecutor;
 import com.alchemist.deepexplore.config.AiModelProperties;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,10 +18,8 @@ import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.service.TokenStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -30,48 +29,35 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
 
     private static final Logger log =
             LoggerFactory.getLogger(LangChain4jAgentExecutor.class);
-    private static final Set<String> CODING_TOOLS = Set.of(
-            "list_files",
-            "read_file",
-            "grep_search",
-            "write_file",
-            "apply_patch",
-            "run_command",
-            "start_preview",
-            "preview_status",
-            "preview_logs",
-            "stop_preview"
-    );
-
     private final String agentId;
-    private final StreamingAssistant fastAssistant;
-    private final StreamingAssistant deepAssistant;
+    private final AgentProfileRuntimeRegistry profileRuntimes;
     private final AiModelProperties modelProperties;
     private final LangChain4jMemoryManager memoryManager;
     private final WebSearchRoutingContext webSearchRoutingContext;
     private final AgentInvocationContextRegistry invocationContexts;
+    private final ToolDescriptorRegistry toolDescriptors;
     private final ObjectMapper objectMapper;
     private final int maxEventResultCharacters;
 
     public LangChain4jAgentExecutor(
             @Value("${ai.agent.id:assistant}") String agentId,
-            @Qualifier("fastStreamingAssistant") StreamingAssistant fastAssistant,
-            @Qualifier("deepStreamingAssistant") StreamingAssistant deepAssistant,
+            AgentProfileRuntimeRegistry profileRuntimes,
             AiModelProperties modelProperties,
             LangChain4jMemoryManager memoryManager,
             WebSearchRoutingContext webSearchRoutingContext,
             AgentInvocationContextRegistry invocationContexts,
+            ToolDescriptorRegistry toolDescriptors,
             ObjectMapper objectMapper,
             @Value("${tools.web-search.max-event-result-characters:16384}")
             int maxEventResultCharacters
     ) {
         this.agentId = agentId;
-        this.fastAssistant = fastAssistant;
-        this.deepAssistant = deepAssistant;
+        this.profileRuntimes = profileRuntimes;
         this.modelProperties = modelProperties;
         this.memoryManager = memoryManager;
         this.webSearchRoutingContext = webSearchRoutingContext;
         this.invocationContexts = invocationContexts;
+        this.toolDescriptors = toolDescriptors;
         this.objectMapper = objectMapper;
         this.maxEventResultCharacters = maxEventResultCharacters;
     }
@@ -115,18 +101,22 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
 
             try {
                 webSearchRoutingContext.bind(
-                        request.conversationId(),
+                        request.runId(),
                         request.searchProvider()
                 );
                 invocationContexts.bind(
-                        request.conversationId(),
                         request.runId(),
+                        request.conversationId(),
                         request.workspaceId()
                 );
                 TokenStream stream = assistantFor(request.profileId())
-                        .chat(request.conversationId(), request.message());
+                        .chat(request.runId(), request.message());
                 stream.onPartialResponseWithContext((partial, context) -> {
-                            handle.compareAndSet(null, context.streamingHandle());
+                            registerHandle(
+                                    active,
+                                    handle,
+                                    context.streamingHandle()
+                            );
                             if (active.get()) {
                                 sink.next(new AgentExecutionEvent.TextDelta(
                                         partial.text()
@@ -134,7 +124,11 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                             }
                         })
                         .onPartialToolCallWithContext((partial, context) ->
-                                handle.compareAndSet(null, context.streamingHandle()))
+                                registerHandle(
+                                        active,
+                                        handle,
+                                        context.streamingHandle()
+                                ))
                         .beforeToolExecution(tool -> {
                             if (active.get()) {
                                 sink.next(new AgentExecutionEvent.ToolCallStarted(
@@ -152,7 +146,10 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                                 sink.next(new AgentExecutionEvent.ToolCallCompleted(
                                         tool.request().id(),
                                         tool.request().name(),
-                                        eventResult(tool.result()),
+                                        eventResult(
+                                                tool.request().name(),
+                                                tool.result()
+                                        ),
                                         !tool.hasFailed()
                                                 && toolResultSucceeded(
                                                         tool.result()
@@ -215,23 +212,35 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     }
 
     @Override
-    public void release(String conversationId) {
-        webSearchRoutingContext.clear(conversationId);
-        invocationContexts.clear(conversationId);
-        fastAssistant.evictChatMemory(conversationId);
-        deepAssistant.evictChatMemory(conversationId);
+    public void invalidate(String conversationId) {
+        memoryManager.invalidate(conversationId);
+    }
+
+    @Override
+    public void markMemorySynchronized(
+            String conversationId,
+            String sourceHeadMessageId
+    ) {
+        memoryManager.markSynchronized(
+                conversationId,
+                sourceHeadMessageId
+        );
+    }
+
+    @Override
+    public void release(String conversationId, String runId) {
+        webSearchRoutingContext.clear(runId);
+        invocationContexts.clear(runId);
+        profileRuntimes.list().forEach(runtime ->
+                runtime.assistant().evictChatMemory(runId));
     }
 
     private StreamingAssistant assistantFor(String profileId) {
-        return AgentProfile.DEEP.id().equalsIgnoreCase(profileId)
-                ? deepAssistant
-                : fastAssistant;
+        return profileRuntimes.require(profileId).assistant();
     }
 
     private String modelName(String profileId) {
-        return AgentProfile.DEEP.id().equalsIgnoreCase(profileId)
-                ? modelProperties.resolvedDeepModelName()
-                : modelProperties.modelName();
+        return profileRuntimes.require(profileId).modelName();
     }
 
     private static Integer totalTokens(TokenUsage tokenUsage) {
@@ -246,7 +255,12 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                 + "\n...[truncated for run event]";
     }
 
-    private String eventResult(String result) {
+    private String eventResult(String toolName, String result) {
+        ToolDescriptor descriptor = toolDescriptors.descriptor(toolName);
+        if (descriptor.resultExposure()
+                == ToolDescriptor.ResultExposure.NONE) {
+            return null;
+        }
         if (result == null || result.isBlank()) {
             return result;
         }
@@ -280,16 +294,22 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     }
 
     private String eventArguments(String toolName, String arguments) {
-        if (!CODING_TOOLS.contains(toolName)) {
-            return truncate(arguments);
+        ToolDescriptor descriptor = toolDescriptors.descriptor(toolName);
+        String field = switch (descriptor.argumentExposure()) {
+            case DESCRIPTION -> "description";
+            case QUERY -> "query";
+            case NONE -> null;
+        };
+        if (field == null) {
+            return "{}";
         }
         try {
             JsonNode parsed = objectMapper.readTree(arguments);
-            JsonNode description = parsed.get("description");
-            if (description != null && description.isTextual()) {
+            JsonNode value = parsed.get(field);
+            if (value != null && value.isTextual()) {
                 return objectMapper.writeValueAsString(java.util.Map.of(
-                        "description",
-                        description.asText()
+                        field,
+                        value.asText()
                 ));
             }
         } catch (Exception ignored) {
@@ -311,8 +331,22 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     }
 
     private void clearRequestContexts(AgentExecutionRequest request) {
-        webSearchRoutingContext.clear(request.conversationId());
-        invocationContexts.clear(request.conversationId(), request.runId());
+        webSearchRoutingContext.clear(request.runId());
+        invocationContexts.clear(request.runId());
+    }
+
+    private static void registerHandle(
+            AtomicBoolean active,
+            AtomicReference<StreamingHandle> reference,
+            StreamingHandle handle
+    ) {
+        if (handle == null) {
+            return;
+        }
+        reference.compareAndSet(null, handle);
+        if (!active.get()) {
+            handle.cancel();
+        }
     }
 
     private static boolean isToolRoundLimitExceeded(Throwable error) {

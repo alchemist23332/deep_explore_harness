@@ -11,7 +11,9 @@ public record ChatCommand(
         String userParentMessageId,
         String assistantMessageId,
         WebSearchProvider searchProvider,
-        String workspaceId
+        String workspaceId,
+        String agentId,
+        String profileId
 ) {
 
     public ChatCommand {
@@ -35,7 +37,64 @@ public record ChatCommand(
                 userParentMessageId,
                 assistantMessageId,
                 searchProvider,
+                null,
+                null,
                 null
         );
+    }
+
+    public ChatCommand(
+            String conversationId,
+            String message,
+            AgentProfile profile,
+            String userMessageId,
+            String userParentMessageId,
+            String assistantMessageId,
+            WebSearchProvider searchProvider,
+            String workspaceId
+    ) {
+        this(
+                conversationId,
+                message,
+                profile,
+                userMessageId,
+                userParentMessageId,
+                assistantMessageId,
+                searchProvider,
+                workspaceId,
+                null,
+                null
+        );
+    }
+
+    public ChatCommand(
+            String conversationId,
+            String message,
+            AgentProfile profile,
+            String userMessageId,
+            String userParentMessageId,
+            String assistantMessageId,
+            WebSearchProvider searchProvider,
+            String workspaceId,
+            String agentId
+    ) {
+        this(
+                conversationId,
+                message,
+                profile,
+                userMessageId,
+                userParentMessageId,
+                assistantMessageId,
+                searchProvider,
+                workspaceId,
+                agentId,
+                null
+        );
+    }
+
+    public String resolvedProfileId() {
+        return profileId == null || profileId.isBlank()
+                ? profile.id()
+                : profileId;
     }
 }

@@ -51,7 +51,7 @@ class CodingToolsTest {
 
     @Test
     void routesToolToBoundWorkspace() throws Exception {
-        contexts.bind("conversation-1", "run-1", "workspace-1");
+        contexts.bind("run-1", "conversation-1", "workspace-1");
         when(workspaces.readFile(
                 "workspace-1",
                 "src/App.java",
@@ -63,7 +63,7 @@ class CodingToolsTest {
         ));
 
         String result = tools.readFile(
-                "conversation-1",
+                "run-1",
                 "Inspect the application",
                 "src/App.java",
                 1,
@@ -85,7 +85,7 @@ class CodingToolsTest {
     @Test
     void returnsStructuredErrorWithoutWorkspaceBinding() throws Exception {
         String result = tools.runCommand(
-                "conversation-1",
+                "run-1",
                 "Run tests",
                 "mvn test",
                 ""
@@ -117,13 +117,13 @@ class CodingToolsTest {
                 limited,
                 objectMapper
         );
-        contexts.bind("conversation-1", "run-1", "workspace-1");
+        contexts.bind("run-1", "conversation-1", "workspace-1");
         when(workspaces.runCommand("workspace-1", "pwd", ""))
                 .thenReturn(CodingToolResult.success("ok", null));
-        tools.runCommand("conversation-1", "First", "pwd", "");
+        tools.runCommand("run-1", "First", "pwd", "");
 
         String result = tools.runCommand(
-                "conversation-1",
+                "run-1",
                 "Second",
                 "pwd",
                 ""
@@ -137,7 +137,7 @@ class CodingToolsTest {
 
     @Test
     void startsPreviewForBoundWorkspace() throws Exception {
-        contexts.bind("conversation-1", "run-1", "workspace-1");
+        contexts.bind("run-1", "conversation-1", "workspace-1");
         when(previews.start(
                 "workspace-1",
                 "pnpm dev --host 0.0.0.0 --port 3000",
@@ -152,7 +152,7 @@ class CodingToolsTest {
         ));
 
         String result = tools.startPreview(
-                "conversation-1",
+                "run-1",
                 "Start the game",
                 "pnpm dev --host 0.0.0.0 --port 3000",
                 "",

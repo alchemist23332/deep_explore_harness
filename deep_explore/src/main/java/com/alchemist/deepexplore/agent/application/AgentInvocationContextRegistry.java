@@ -13,62 +13,69 @@ public class AgentInvocationContextRegistry {
             new ConcurrentHashMap<>();
 
     public void bind(
+            String invocationId,
             String conversationId,
-            String runId,
             String workspaceId
     ) {
-        if (workspaceId == null || workspaceId.isBlank()) {
-            contexts.remove(conversationId);
-            return;
-        }
-        contexts.put(conversationId, new Context(runId, workspaceId));
+        contexts.put(
+                invocationId,
+                new Context(conversationId, workspaceId)
+        );
     }
 
-    public Optional<Context> find(Object conversationId) {
-        if (conversationId == null) {
+    public Optional<Context> find(Object invocationId) {
+        if (invocationId == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(contexts.get(conversationId.toString()));
+        return Optional.ofNullable(contexts.get(invocationId.toString()))
+                .filter(Context::hasWorkspace);
     }
 
-    public Context require(String conversationId) {
-        return find(conversationId).orElseThrow(() ->
+    public Context require(String invocationId) {
+        return find(invocationId).orElseThrow(() ->
                 new IllegalStateException(
                         "No workspace is bound to this Agent run"
                 ));
     }
 
-    public boolean isBound(Object conversationId) {
-        return find(conversationId).isPresent();
+    public boolean isBound(Object invocationId) {
+        return find(invocationId).isPresent();
     }
 
-    public void clear(String conversationId, String runId) {
-        contexts.computeIfPresent(conversationId, (ignored, context) ->
-                context.runId().equals(runId) ? null : context);
+    public Optional<String> conversationId(Object invocationId) {
+        if (invocationId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(contexts.get(invocationId.toString()))
+                .map(Context::conversationId);
     }
 
-    public void clear(String conversationId) {
-        contexts.remove(conversationId);
+    public void clear(String invocationId) {
+        contexts.remove(invocationId);
     }
 
     public static final class Context {
 
-        private final String runId;
+        private final String conversationId;
         private final String workspaceId;
         private final ConcurrentMap<String, AtomicInteger> counters =
                 new ConcurrentHashMap<>();
 
-        private Context(String runId, String workspaceId) {
-            this.runId = runId;
+        private Context(String conversationId, String workspaceId) {
+            this.conversationId = conversationId;
             this.workspaceId = workspaceId;
         }
 
-        public String runId() {
-            return runId;
+        public String conversationId() {
+            return conversationId;
         }
 
         public String workspaceId() {
             return workspaceId;
+        }
+
+        private boolean hasWorkspace() {
+            return workspaceId != null && !workspaceId.isBlank();
         }
 
         public int increment(String counter) {

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.alchemist.deepexplore.agent.application.ToolDescriptorTestFixtures;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.WebSearchProvider;
 import com.alchemist.deepexplore.harness.application.command.ChatCommand;
@@ -30,7 +31,10 @@ class ChatControllerTest {
     void setUp() {
         chatStreamService = mock(ChatStreamService.class);
         ChatEventPresenter presenter = new ChatEventPresenter(
-                new ToolActivityFormatter(new ObjectMapper())
+                new ToolActivityFormatter(
+                        new ObjectMapper(),
+                        ToolDescriptorTestFixtures.registry()
+                )
         );
         webTestClient = WebTestClient.bindToController(
                 new ChatController(chatStreamService, presenter)

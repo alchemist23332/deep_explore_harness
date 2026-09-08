@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService;
 import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService.RunActivityView;
+import com.alchemist.deepexplore.support.BlockingExecution;
 import com.alchemist.deepexplore.harness.application.query.RunActivityQueryService.ToolActivityView;
 import com.alchemist.deepexplore.harness.application.query.ToolStatus;
 import java.time.Instant;
@@ -37,7 +38,10 @@ class RunActivityControllerTest {
                 )
         ));
 
-        WebTestClient.bindToController(new RunActivityController(service))
+        WebTestClient.bindToController(new RunActivityController(
+                        service,
+                        new BlockingExecution()
+                ))
                 .build()
                 .get()
                 .uri("/api/conversations/conversation-1/run-activities")

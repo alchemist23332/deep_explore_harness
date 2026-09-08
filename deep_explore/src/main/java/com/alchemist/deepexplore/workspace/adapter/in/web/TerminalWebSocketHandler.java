@@ -2,6 +2,7 @@ package com.alchemist.deepexplore.workspace.adapter.in.web;
 
 import com.alchemist.deepexplore.workspace.application.terminal.TerminalApplicationService;
 import com.alchemist.deepexplore.workspace.application.terminal.TerminalConnection;
+import com.alchemist.deepexplore.support.BlockingExecution;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -19,13 +20,16 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
 
     private final TerminalApplicationService terminals;
     private final ObjectMapper objectMapper;
+    private final BlockingExecution blocking;
 
     public TerminalWebSocketHandler(
             TerminalApplicationService terminals,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            BlockingExecution blocking
     ) {
         this.terminals = terminals;
         this.objectMapper = objectMapper;
+        this.blocking = blocking;
     }
 
     @Override
@@ -33,11 +37,16 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
         String workspaceId = workspaceId(
                 webSocket.getHandshakeInfo().getUri()
         );
-        TerminalConnection terminal = terminals.open(
-                workspaceId,
-                100,
-                30
-        );
+        return blocking.mono(
+                BlockingExecution.Kind.DOCKER,
+                () -> terminals.open(workspaceId, 100, 30)
+        ).flatMap(terminal -> handleConnected(webSocket, terminal));
+    }
+
+    private Mono<Void> handleConnected(
+            WebSocketSession webSocket,
+            TerminalConnection terminal
+    ) {
         Flux<WebSocketMessage> outbound = Flux.concat(
                 Mono.fromSupplier(() -> webSocket.textMessage(
                         json(Map.of(
@@ -61,7 +70,13 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
 
         Mono<Void> sender = webSocket.send(outbound);
         Mono<Void> receiver = webSocket.receive()
-                .doOnNext(message -> handleMessage(terminal, message))
+                .concatMap(message -> blocking.mono(
+                        BlockingExecution.Kind.DOCKER,
+                        () -> {
+                            handleMessage(terminal, message);
+                            return true;
+                        }
+                ))
                 .then();
 
         return Mono.firstWithSignal(sender, receiver)

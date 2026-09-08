@@ -13,6 +13,7 @@ import com.alchemist.deepexplore.workspace.domain.WorkspaceChange;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceEntry;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceFile;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceTreeNode;
+import com.alchemist.deepexplore.support.BlockingExecution;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,7 +37,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api")
@@ -49,6 +49,7 @@ public class WorkspaceController {
     private final WorkspaceFileService files;
     private final WorkspaceChangeService changes;
     private final PreviewApplicationService previews;
+    private final BlockingExecution blocking;
 
     public WorkspaceController(
             WorkspaceQueryService workspaces,
@@ -57,7 +58,8 @@ public class WorkspaceController {
             RuntimeProfileQueryService runtimeProfiles,
             WorkspaceFileService files,
             WorkspaceChangeService changes,
-            PreviewApplicationService previews
+            PreviewApplicationService previews,
+            BlockingExecution blocking
     ) {
         this.workspaces = workspaces;
         this.lifecycle = lifecycle;
@@ -66,6 +68,7 @@ public class WorkspaceController {
         this.files = files;
         this.changes = changes;
         this.previews = previews;
+        this.blocking = blocking;
     }
 
     @GetMapping("/runtime-profiles")
@@ -335,25 +338,24 @@ public class WorkspaceController {
         return blocking(() -> previews.stop(workspaceId));
     }
 
-    private static <T> Mono<T> withTemporaryUpload(
+    private <T> Mono<T> withTemporaryUpload(
             FilePart file,
             ThrowingFunction<Path, T> action
     ) {
-        return Mono.fromCallable(
+        return blocking.mono(
+                        BlockingExecution.Kind.FILE,
                         () -> Files.createTempFile(
                                 "deep-explore-upload-",
                                 ".tmp"
                         )
                 )
-                .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(temporary -> file.transferTo(temporary)
                         .then(blocking(() -> action.apply(temporary)))
                         .doFinally(signal -> deleteQuietly(temporary)));
     }
 
-    private static <T> Mono<T> blocking(Callable<T> action) {
-        return Mono.fromCallable(action)
-                .subscribeOn(Schedulers.boundedElastic());
+    private <T> Mono<T> blocking(Callable<T> action) {
+        return blocking.mono(BlockingExecution.Kind.DOCKER, action);
     }
 
     private static void deleteQuietly(Path temporary) {

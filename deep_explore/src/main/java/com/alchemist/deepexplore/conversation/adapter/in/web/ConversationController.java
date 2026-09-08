@@ -2,9 +2,9 @@ package com.alchemist.deepexplore.conversation.adapter.in.web;
 
 import com.alchemist.deepexplore.conversation.application.ConversationApplicationService;
 import com.alchemist.deepexplore.conversation.domain.Conversation;
+import com.alchemist.deepexplore.support.BlockingExecution;
 import jakarta.validation.Valid;
 import java.util.List;
-import java.util.concurrent.Callable;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,16 +16,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/conversations")
 public class ConversationController {
 
     private final ConversationApplicationService conversations;
+    private final BlockingExecution blocking;
 
-    public ConversationController(ConversationApplicationService conversations) {
+    public ConversationController(
+            ConversationApplicationService conversations,
+            BlockingExecution blocking
+    ) {
         this.conversations = conversations;
+        this.blocking = blocking;
     }
 
     @GetMapping
@@ -99,7 +103,7 @@ public class ConversationController {
         });
     }
 
-    private static <T> Mono<T> blocking(Callable<T> action) {
-        return Mono.fromCallable(action).subscribeOn(Schedulers.boundedElastic());
+    private <T> Mono<T> blocking(java.util.concurrent.Callable<T> action) {
+        return blocking.mono(BlockingExecution.Kind.JDBC, action);
     }
 }

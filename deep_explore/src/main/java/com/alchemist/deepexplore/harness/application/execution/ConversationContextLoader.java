@@ -56,7 +56,7 @@ final class ConversationContextLoader {
                         message.content()
                 ))
                 .toList();
-        return new Context(conversation, replay, history);
+        return new Context(conversation, replay, headMessageId, history);
     }
 
     void appendUserMessage(
@@ -78,6 +78,7 @@ final class ConversationContextLoader {
     record Context(
             Conversation conversation,
             boolean replay,
+            String headMessageId,
             List<AgentMessage> history
     ) {
     }

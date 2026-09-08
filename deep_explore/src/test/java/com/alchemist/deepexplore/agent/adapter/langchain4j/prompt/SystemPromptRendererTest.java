@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchPromptContributor;
+import com.alchemist.deepexplore.agent.application.AgentProfileRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
+import com.alchemist.deepexplore.agent.domain.AgentProfileDefinition;
 import com.alchemist.deepexplore.coding.adapter.in.langchain4j.CodingPromptContributor;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ class SystemPromptRendererTest {
     void rendersFastProfileWithoutDisabledToolPolicies() {
         SystemPromptRenderer renderer = new SystemPromptRenderer(
                 catalog,
+                profiles(),
                 List.of()
         );
 
@@ -39,6 +42,7 @@ class SystemPromptRendererTest {
     void rendersDeepProfileAndEnabledToolPolicyInStableOrder() {
         SystemPromptRenderer renderer = new SystemPromptRenderer(
                 catalog,
+                profiles(),
                 List.of(new WebSearchPromptContributor())
         );
 
@@ -59,6 +63,7 @@ class SystemPromptRendererTest {
     void includesCodingPolicyOnlyForWorkspaceRuns() {
         SystemPromptRenderer renderer = new SystemPromptRenderer(
                 catalog,
+                profiles(),
                 List.of(new CodingPromptContributor())
         );
 
@@ -87,6 +92,7 @@ class SystemPromptRendererTest {
         );
         SystemPromptRenderer renderer = new SystemPromptRenderer(
                 catalog,
+                profiles(),
                 List.of(profile -> List.of(duplicate))
         );
 
@@ -123,5 +129,28 @@ class SystemPromptRendererTest {
     private static int occurrences(String value, String target) {
         return (value.length() - value.replace(target, "").length())
                 / target.length();
+    }
+
+    private static AgentProfileRegistry profiles() {
+        return new AgentProfileRegistry(List.of(
+                profile(AgentProfile.FAST, "fast.md"),
+                profile(AgentProfile.DEEP, "deep.md")
+        ));
+    }
+
+    private static AgentProfileDefinition profile(
+            AgentProfile profile,
+            String resource
+    ) {
+        return new AgentProfileDefinition(
+                profile.id(),
+                profile.name(),
+                "model",
+                1_000,
+                "none",
+                "disabled",
+                "classpath:prompts/assistant/" + resource,
+                "execution_profile"
+        );
     }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.alchemist.deepexplore.agent.application.ToolDescriptorTestFixtures;
 import com.alchemist.deepexplore.harness.domain.AgentRun;
 import com.alchemist.deepexplore.harness.domain.RunEvent;
 import com.alchemist.deepexplore.harness.domain.RunEventEnvelope;
@@ -39,7 +40,7 @@ class RunActivityQueryServiceTest {
         );
         when(runStore.listByConversation("conversation-1"))
                 .thenReturn(List.of(run));
-        when(eventStore.list("run-1", 0)).thenReturn(List.of(
+        when(eventStore.listByConversation("conversation-1")).thenReturn(List.of(
                 envelope(
                         1,
                         startedAt,
@@ -73,7 +74,10 @@ class RunActivityQueryServiceTest {
         RunActivityQueryService service = new RunActivityQueryService(
                 runStore,
                 eventStore,
-                new ToolActivityFormatter(new ObjectMapper())
+                new ToolActivityFormatter(
+                        new ObjectMapper(),
+                        ToolDescriptorTestFixtures.registry()
+                )
         );
 
         List<RunActivityQueryService.RunActivityView> activities =

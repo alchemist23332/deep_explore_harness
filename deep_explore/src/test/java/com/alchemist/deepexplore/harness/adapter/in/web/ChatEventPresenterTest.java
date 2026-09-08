@@ -2,6 +2,7 @@ package com.alchemist.deepexplore.harness.adapter.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.alchemist.deepexplore.agent.application.ToolDescriptorTestFixtures;
 import com.alchemist.deepexplore.harness.application.query.ToolActivityFormatter;
 import com.alchemist.deepexplore.harness.application.query.ToolStatus;
 import com.alchemist.deepexplore.harness.domain.RunEvent;
@@ -13,7 +14,10 @@ import org.junit.jupiter.api.Test;
 class ChatEventPresenterTest {
 
     private final ChatEventPresenter presenter = new ChatEventPresenter(
-            new ToolActivityFormatter(new ObjectMapper())
+            new ToolActivityFormatter(
+                    new ObjectMapper(),
+                    ToolDescriptorTestFixtures.registry()
+            )
     );
 
     @Test
@@ -50,7 +54,7 @@ class ChatEventPresenterTest {
         assertThat(completed.type()).isEqualTo("tool_end");
         assertThat(completed.tool().status()).isEqualTo(ToolStatus.SUCCEEDED);
         assertThat(completed.content())
-                .isEqualTo("搜索完成，正在整理结果")
+                .isEqualTo("网页搜索执行完成")
                 .doesNotContain("raw result");
     }
 

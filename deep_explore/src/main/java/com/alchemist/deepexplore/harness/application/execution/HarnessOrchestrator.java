@@ -67,15 +67,17 @@ public class HarnessOrchestrator implements HarnessService {
                 executor,
                 sink
         );
-        RunEventEnvelope startedEvent = session.envelope(new RunEvent.RunStarted(
+        RunEventEnvelope startedEvent = persistence.start(
+                session.run(),
+                session.envelope(new RunEvent.RunStarted(
                 session.run().profileId(),
                 session.run().userMessageId(),
                 session.run().assistantMessageId(),
                 command.searchProvider() == null
                         ? null
                         : command.searchProvider().name()
-        ));
-        persistence.start(session.run(), startedEvent);
+                ))
+        );
         sink.next(startedEvent);
 
         if (!executor.isConfigured()) {
@@ -86,14 +88,19 @@ public class HarnessOrchestrator implements HarnessService {
             return;
         }
 
-        if (!conversationLock.tryAcquire(conversation.id(), generationLockTimeout)) {
+        var lease = conversationLock.tryAcquire(
+                conversation.id(),
+                session.run().id(),
+                generationLockTimeout
+        );
+        if (lease.isEmpty()) {
             session.fail(
                     "CONVERSATION_BUSY",
                     "该会话正在生成回复，请等待当前请求完成"
             );
             return;
         }
-        session.markLockAcquired();
+        session.markLockAcquired(lease.orElseThrow(), generationLockTimeout);
 
         try {
             ConversationContextLoader.Context context = contextLoader.load(
@@ -105,10 +112,11 @@ public class HarnessOrchestrator implements HarnessService {
                     new AgentPreparationRequest(
                             conversation.id(),
                             context.replay(),
+                            context.headMessageId(),
                             context.history()
                     )
             );
-            session.prepared(snapshot);
+            session.prepared();
             persistence.checkpoint(
                     session.run(),
                     snapshot.payload(),

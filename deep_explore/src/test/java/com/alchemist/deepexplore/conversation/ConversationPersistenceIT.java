@@ -8,6 +8,7 @@ import com.alchemist.deepexplore.conversation.adapter.out.postgres.PostgresConve
 import com.alchemist.deepexplore.conversation.adapter.out.postgres.PostgresMessageStore;
 import com.alchemist.deepexplore.conversation.domain.Conversation;
 import com.alchemist.deepexplore.conversation.domain.ConversationMessage;
+import com.alchemist.deepexplore.conversation.port.ConversationLock;
 import com.alchemist.deepexplore.harness.adapter.out.postgres.PostgresCheckpointStore;
 import com.alchemist.deepexplore.harness.adapter.out.postgres.PostgresRunEventStore;
 import com.alchemist.deepexplore.harness.adapter.out.postgres.PostgresRunStore;
@@ -75,14 +76,17 @@ class ConversationPersistenceIT {
         Conversation conversation =
                 conversationStore.create("conversation-1", "Persistent chat");
 
+        ConversationLock.Lease firstLease = conversationLock.tryAcquire(
+                conversation.id(),
+                "run-lease-1",
+                Duration.ofMinutes(5)
+        ).orElseThrow();
         assertThat(conversationLock.tryAcquire(
                 conversation.id(),
+                "run-lease-2",
                 Duration.ofMinutes(5)
-        )).isTrue();
-        assertThat(conversationLock.tryAcquire(
-                conversation.id(),
-                Duration.ofMinutes(5)
-        )).isFalse();
+        )).isEmpty();
+        assertThat(conversationLock.renew(firstLease)).isTrue();
 
         messageStore.append(
                 conversation.id(),
@@ -108,7 +112,24 @@ class ConversationPersistenceIT {
                 conversation.id(),
                 List.of(UserMessage.from("hello"), AiMessage.from("hi"))
         );
-        conversationLock.release(conversation.id());
+        assertThat(memoryStore.isDirty(conversation.id())).isFalse();
+        memoryStore.markDirty(conversation.id());
+        assertThat(memoryStore.isDirty(conversation.id())).isTrue();
+        memoryStore.clearDirty(conversation.id());
+        assertThat(memoryStore.isDirty(conversation.id())).isFalse();
+        assertThat(conversationLock.release(firstLease)).isTrue();
+        ConversationLock.Lease secondLease = conversationLock.tryAcquire(
+                conversation.id(),
+                "run-lease-2",
+                Duration.ofMinutes(5)
+        ).orElseThrow();
+        assertThat(conversationLock.release(firstLease)).isFalse();
+        assertThat(conversationLock.tryAcquire(
+                conversation.id(),
+                "run-lease-3",
+                Duration.ofMinutes(5)
+        )).isEmpty();
+        assertThat(conversationLock.release(secondLease)).isTrue();
 
         Instant now = Instant.now();
         workspaceStore.create(
@@ -147,7 +168,7 @@ class ConversationPersistenceIT {
                 )
         ));
         checkpointStore.save(run.id(), "{\"state\":\"ready\"}");
-        runStore.complete(run.id());
+        assertThat(runStore.complete(run.id(), run.version())).isTrue();
 
         assertThat(messageStore.list(conversation.id()))
                 .extracting(ConversationMessage::content)

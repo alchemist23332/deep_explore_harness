@@ -3,7 +3,6 @@ package com.alchemist.deepexplore.coding.adapter.in.langchain4j;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.PromptContext;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.PromptFragment;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.SystemPromptContributor;
-import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -26,7 +25,7 @@ public class CodingPromptContributor implements SystemPromptContributor {
     );
 
     @Override
-    public Collection<PromptFragment> fragments(AgentProfile profile) {
+    public Collection<PromptFragment> fragments(String profileId) {
         return List.of(CODING_POLICY);
     }
 

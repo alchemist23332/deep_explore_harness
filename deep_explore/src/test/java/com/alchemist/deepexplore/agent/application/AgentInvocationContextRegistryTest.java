@@ -11,29 +11,32 @@ class AgentInvocationContextRegistryTest {
         AgentInvocationContextRegistry registry =
                 new AgentInvocationContextRegistry();
 
-        registry.bind("conversation-1", "run-1", "workspace-1");
-        registry.clear("conversation-1", "other-run");
+        registry.bind("run-1", "conversation-1", "workspace-1");
+        registry.clear("other-run");
 
         AgentInvocationContextRegistry.Context context =
-                registry.require("conversation-1");
-        assertThat(context.runId()).isEqualTo("run-1");
+                registry.require("run-1");
+        assertThat(context.conversationId()).isEqualTo("conversation-1");
         assertThat(context.workspaceId()).isEqualTo("workspace-1");
         assertThat(context.increment("tools")).isEqualTo(1);
         assertThat(context.increment("tools")).isEqualTo(2);
 
-        registry.clear("conversation-1", "run-1");
+        registry.clear("run-1");
 
-        assertThat(registry.find("conversation-1")).isEmpty();
+        assertThat(registry.find("run-1")).isEmpty();
     }
 
     @Test
-    void blankWorkspaceRemovesExistingBinding() {
+    void blankWorkspaceHidesToolsButRetainsRunOwnership() {
         AgentInvocationContextRegistry registry =
                 new AgentInvocationContextRegistry();
-        registry.bind("conversation-1", "run-1", "workspace-1");
+        registry.bind("run-1", "conversation-1", "workspace-1");
 
-        registry.bind("conversation-1", "run-2", " ");
+        registry.bind("run-2", "conversation-1", " ");
 
-        assertThat(registry.isBound("conversation-1")).isFalse();
+        assertThat(registry.isBound("run-2")).isFalse();
+        assertThat(registry.conversationId("run-2"))
+                .contains("conversation-1");
+        assertThat(registry.isBound("run-1")).isTrue();
     }
 }

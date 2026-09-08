@@ -11,6 +11,7 @@ import java.io.PipedOutputStream;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -86,7 +87,9 @@ public class DockerSandboxTerminal implements SandboxTerminal {
         private final PipedInputStream stdin;
         private final PipedOutputStream input;
         private final Sinks.Many<byte[]> output =
-                Sinks.many().unicast().onBackpressureBuffer();
+                Sinks.many().unicast().onBackpressureBuffer(
+                        new ArrayBlockingQueue<>(256)
+                );
         private final AtomicBoolean closed = new AtomicBoolean();
         private ResultCallback.Adapter<Frame> callback;
 
@@ -105,10 +108,13 @@ public class DockerSandboxTerminal implements SandboxTerminal {
                 @Override
                 public void onNext(Frame frame) {
                     byte[] payload = frame.getPayload();
-                    output.tryEmitNext(Arrays.copyOf(
+                    Sinks.EmitResult result = output.tryEmitNext(Arrays.copyOf(
                             payload,
                             payload.length
                     ));
+                    if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
+                        DockerTerminalSession.this.close();
+                    }
                 }
 
                 @Override

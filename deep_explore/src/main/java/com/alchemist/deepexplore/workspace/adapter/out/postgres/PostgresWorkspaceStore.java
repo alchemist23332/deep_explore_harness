@@ -1,5 +1,6 @@
 package com.alchemist.deepexplore.workspace.adapter.out.postgres;
 
+import com.alchemist.deepexplore.config.SecurityProperties;
 import com.alchemist.deepexplore.workspace.domain.RuntimeProfile;
 import com.alchemist.deepexplore.workspace.domain.Workspace;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceStatus;
@@ -16,9 +17,14 @@ import org.springframework.stereotype.Repository;
 public class PostgresWorkspaceStore implements WorkspaceStore {
 
     private final JdbcTemplate jdbcTemplate;
+    private final SecurityProperties security;
 
-    public PostgresWorkspaceStore(JdbcTemplate jdbcTemplate) {
+    public PostgresWorkspaceStore(
+            JdbcTemplate jdbcTemplate,
+            SecurityProperties security
+    ) {
         this.jdbcTemplate = jdbcTemplate;
+        this.security = security;
     }
 
     @Override
@@ -31,12 +37,19 @@ public class PostgresWorkspaceStore implements WorkspaceStore {
         jdbcTemplate.update("""
                 INSERT INTO workspaces (
                     id,
+                    tenant_id,
                     owner_id,
                     name,
                     runtime_profile
                 )
-                VALUES (?, ?, ?, ?)
-                """, workspaceId, ownerId, name, runtimeProfile.name());
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                workspaceId,
+                security.tenantId(),
+                ownerId,
+                name,
+                runtimeProfile.name()
+        );
         return find(workspaceId, ownerId).orElseThrow();
     }
 
@@ -45,10 +58,13 @@ public class PostgresWorkspaceStore implements WorkspaceStore {
         return jdbcTemplate.query("""
                         SELECT *
                         FROM workspaces
-                        WHERE id = ? AND owner_id = ?
+                        WHERE id = ?
+                          AND tenant_id = ?
+                          AND owner_id = ?
                         """,
                 (resultSet, rowNum) -> map(resultSet),
                 workspaceId,
+                security.tenantId(),
                 ownerId
         ).stream().findFirst();
     }
@@ -58,9 +74,14 @@ public class PostgresWorkspaceStore implements WorkspaceStore {
         return jdbcTemplate.query("""
                 SELECT *
                 FROM workspaces
-                WHERE owner_id = ?
+                WHERE tenant_id = ?
+                  AND owner_id = ?
                 ORDER BY updated_at DESC
-                """, (resultSet, rowNum) -> map(resultSet), ownerId);
+                """,
+                (resultSet, rowNum) -> map(resultSet),
+                security.tenantId(),
+                ownerId
+        );
     }
 
     @Override
@@ -81,20 +102,30 @@ public class PostgresWorkspaceStore implements WorkspaceStore {
                     END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
+                  AND tenant_id = ?
+                  AND owner_id = ?
                 """,
                 status.name(),
                 containerId,
                 lastError,
                 status.name(),
-                workspaceId
+                workspaceId,
+                security.tenantId(),
+                security.ownerId()
         );
     }
 
     @Override
     public void delete(String workspaceId, String ownerId) {
         jdbcTemplate.update(
-                "DELETE FROM workspaces WHERE id = ? AND owner_id = ?",
+                """
+                DELETE FROM workspaces
+                WHERE id = ?
+                  AND tenant_id = ?
+                  AND owner_id = ?
+                """,
                 workspaceId,
+                security.tenantId(),
                 ownerId
         );
     }

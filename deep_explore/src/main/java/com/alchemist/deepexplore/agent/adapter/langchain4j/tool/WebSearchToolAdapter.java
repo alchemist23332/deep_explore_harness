@@ -1,6 +1,8 @@
 package com.alchemist.deepexplore.agent.adapter.langchain4j.tool;
 
 import com.alchemist.deepexplore.agent.domain.WebSearchProvider;
+import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
+import com.alchemist.deepexplore.agent.spi.ToolDescriptorContributor;
 import com.alchemist.deepexplore.agent.spi.WebSearchCapabilities;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -10,7 +12,8 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
-public class WebSearchToolAdapter implements WebSearchCapabilities {
+public class WebSearchToolAdapter
+        implements WebSearchCapabilities, ToolDescriptorContributor {
 
     private final Map<WebSearchProvider, WebSearchProviderClient> clients;
     private final WebSearchProvider defaultProvider;
@@ -58,7 +61,7 @@ public class WebSearchToolAdapter implements WebSearchCapabilities {
             }
     )
     public String search(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(
                     name = "query",
                     description = "A concise web search query"
@@ -75,7 +78,7 @@ public class WebSearchToolAdapter implements WebSearchCapabilities {
             );
         }
         WebSearchProvider provider = routingContext.providerFor(
-                conversationId,
+                invocationId,
                 defaultProvider
         );
         WebSearchProviderClient client = clients.get(provider);
@@ -106,5 +109,15 @@ public class WebSearchToolAdapter implements WebSearchCapabilities {
         return List.of(WebSearchProvider.values()).stream()
                 .filter(clients::containsKey)
                 .toList();
+    }
+
+    @Override
+    public List<ToolDescriptor> toolDescriptors() {
+        return List.of(new ToolDescriptor(
+                "web_search",
+                "网页搜索",
+                ToolDescriptor.ArgumentExposure.QUERY,
+                ToolDescriptor.ResultExposure.NONE
+        ));
     }
 }

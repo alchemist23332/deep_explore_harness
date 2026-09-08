@@ -1,6 +1,5 @@
 package com.alchemist.deepexplore.harness.adapter.in.web;
 
-import com.alchemist.deepexplore.harness.application.command.ChatCommand;
 import com.alchemist.deepexplore.harness.application.command.ChatStreamService;
 import jakarta.validation.Valid;
 import java.util.Map;
@@ -42,16 +41,7 @@ public class ChatController {
             @Valid @RequestBody ChatRequest request
     ) {
         ChatStreamService.ChatStream stream = chatStreamService.stream(
-                new ChatCommand(
-                        request.conversationId(),
-                        request.message(),
-                        request.mode(),
-                        request.userMessageId(),
-                        request.userParentMessageId(),
-                        request.assistantMessageId(),
-                        request.searchProvider(),
-                        request.workspaceId()
-                )
+                request.toCommand()
         );
         String provider = stream.searchProvider().name();
         return stream.events()

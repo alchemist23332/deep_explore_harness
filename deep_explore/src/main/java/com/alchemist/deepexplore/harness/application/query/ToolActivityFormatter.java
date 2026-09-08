@@ -1,8 +1,9 @@
 package com.alchemist.deepexplore.harness.application.query;
 
+import com.alchemist.deepexplore.agent.application.ToolDescriptorRegistry;
+import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.Map;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -11,25 +12,18 @@ public class ToolActivityFormatter {
     private static final int MAX_DETAIL_CHARACTERS = 100;
 
     private final ObjectMapper objectMapper;
+    private final ToolDescriptorRegistry descriptors;
 
-    public ToolActivityFormatter(ObjectMapper objectMapper) {
+    public ToolActivityFormatter(
+            ObjectMapper objectMapper,
+            ToolDescriptorRegistry descriptors
+    ) {
         this.objectMapper = objectMapper;
+        this.descriptors = descriptors;
     }
 
     public String displayName(String toolName) {
-        return Map.ofEntries(
-                Map.entry("web_search", "网页搜索"),
-                Map.entry("list_files", "浏览文件"),
-                Map.entry("read_file", "读取文件"),
-                Map.entry("grep_search", "搜索代码"),
-                Map.entry("write_file", "写入文件"),
-                Map.entry("apply_patch", "应用补丁"),
-                Map.entry("run_command", "运行命令"),
-                Map.entry("start_preview", "启动预览"),
-                Map.entry("preview_status", "检查预览"),
-                Map.entry("preview_logs", "读取预览日志"),
-                Map.entry("stop_preview", "停止预览")
-        ).getOrDefault(toolName, toolName);
+        return descriptors.descriptor(toolName).displayName();
     }
 
     public String startedSummary(
@@ -37,19 +31,22 @@ public class ToolActivityFormatter {
             String argumentsJson,
             String provider
     ) {
-        if (!"web_search".equals(toolName)) {
+        ToolDescriptor descriptor = descriptors.descriptor(toolName);
+        if (descriptor.argumentExposure()
+                == ToolDescriptor.ArgumentExposure.DESCRIPTION) {
             String description = textField(argumentsJson, "description");
-            if (description != null) {
-                return description;
-            }
-            return "正在调用 " + displayName(toolName);
+            return description == null
+                    ? "正在调用 " + descriptor.displayName()
+                    : description;
         }
-        String providerName = providerDisplayName(provider);
-        String query = queryFrom(argumentsJson);
-        if (query == null) {
-            return "正在使用 " + providerName + " 搜索网页";
+        if (descriptor.argumentExposure()
+                == ToolDescriptor.ArgumentExposure.QUERY) {
+            String query = queryFrom(argumentsJson);
+            String prefix = "正在使用 " + providerDisplayName(provider)
+                    + " 调用" + descriptor.displayName();
+            return query == null ? prefix : prefix + "「" + query + "」";
         }
-        return "正在使用 " + providerName + " 搜索「" + query + "」";
+        return "正在调用 " + descriptor.displayName();
     }
 
     public String completedSummary(
@@ -57,14 +54,15 @@ public class ToolActivityFormatter {
             String result,
             boolean success
     ) {
-        if ("web_search".equals(toolName)) {
-            return success ? "搜索完成，正在整理结果" : "网页搜索失败";
+        ToolDescriptor descriptor = descriptors.descriptor(toolName);
+        if (descriptor.resultExposure()
+                == ToolDescriptor.ResultExposure.SUMMARY) {
+            String summary = textField(result, "summary");
+            if (summary != null) {
+                return summary;
+            }
         }
-        String summary = textField(result, "summary");
-        if (summary != null) {
-            return summary;
-        }
-        return displayName(toolName) + (success ? "执行完成" : "执行失败");
+        return descriptor.displayName() + (success ? "执行完成" : "执行失败");
     }
 
     public String completedSummary(String toolName, boolean success) {

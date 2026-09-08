@@ -5,7 +5,9 @@ import java.util.List;
 
 public interface RunEventStore {
 
-    void append(RunEventEnvelope event);
+    RunEventEnvelope append(RunEventEnvelope event);
 
     List<RunEventEnvelope> list(String runId, long afterSequence);
+
+    List<RunEventEnvelope> listByConversation(String conversationId);
 }

@@ -90,6 +90,10 @@ sandbox:
     network-mode: ${SANDBOX_NETWORK_MODE:bridge}
 
 app:
+  security:
+    mode: ${SECURITY_MODE:LOCAL}
+    tenant-id: ${SECURITY_TENANT_ID:local}
+    owner-id: ${SECURITY_OWNER_ID:${SANDBOX_OWNER_ID:local-user}}
   conversation:
     max-messages: ${MAX_CONVERSATION_MESSAGES:20}
     generation-lock-timeout: ${CONVERSATION_LOCK_TIMEOUT:5m}

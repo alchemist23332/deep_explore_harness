@@ -8,7 +8,7 @@ import dev.langchain4j.service.memory.ChatMemoryAccess;
 public interface StreamingAssistant extends ChatMemoryAccess {
 
     TokenStream chat(
-            @MemoryId String conversationId,
+            @MemoryId String invocationId,
             @UserMessage String message
     );
 }

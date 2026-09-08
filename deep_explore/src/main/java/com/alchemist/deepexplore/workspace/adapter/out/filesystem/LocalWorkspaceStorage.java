@@ -28,7 +28,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
 import org.springframework.stereotype.Service;
 
 @Service
-public class LocalWorkspaceStorage implements WorkspaceStorage {
+final class LocalWorkspaceStorage implements WorkspaceStorage {
 
     private static final int MAX_TREE_DEPTH = 64;
     private static final int MAX_TREE_ENTRIES = 20_000;
@@ -36,7 +36,7 @@ public class LocalWorkspaceStorage implements WorkspaceStorage {
     private final LocalWorkspaceLayout directories;
     private final WorkspaceProperties properties;
 
-    public LocalWorkspaceStorage(
+    LocalWorkspaceStorage(
             LocalWorkspaceLayout directories,
             WorkspaceProperties properties
     ) {

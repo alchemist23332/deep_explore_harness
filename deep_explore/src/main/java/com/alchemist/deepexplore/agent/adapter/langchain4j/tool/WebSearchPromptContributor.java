@@ -2,7 +2,6 @@ package com.alchemist.deepexplore.agent.adapter.langchain4j.tool;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.PromptFragment;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.SystemPromptContributor;
-import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import java.util.Collection;
 import java.util.List;
 
@@ -17,7 +16,7 @@ public final class WebSearchPromptContributor
     );
 
     @Override
-    public Collection<PromptFragment> fragments(AgentProfile profile) {
+    public Collection<PromptFragment> fragments(String profileId) {
         return List.of(WEB_SEARCH_POLICY);
     }
 }

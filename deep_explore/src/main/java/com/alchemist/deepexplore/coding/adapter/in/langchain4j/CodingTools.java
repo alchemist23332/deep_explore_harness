@@ -51,7 +51,7 @@ public class CodingTools {
                     + "Paths are relative to the workspace root."
     )
     public String listFiles(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the directory is being inspected")
             String description,
             @P(name = "path", description = "Workspace-relative directory path", required = false)
@@ -61,7 +61,7 @@ public class CodingTools {
             @P(name = "limit", description = "Maximum entries to return", required = false)
             Integer limit
     ) {
-        return invoke(conversationId, Operation.READ, context ->
+        return invoke(invocationId, Operation.READ, context ->
                 workspaces.listFiles(
                         context.workspaceId(),
                         path,
@@ -76,7 +76,7 @@ public class CodingTools {
                     + "Returns numbered lines and a revision for safe edits."
     )
     public String readFile(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the file is being read")
             String description,
             @P(name = "path", description = "Workspace-relative file path")
@@ -86,7 +86,7 @@ public class CodingTools {
             @P(name = "endLine", description = "1-based inclusive last line", required = false)
             Integer endLine
     ) {
-        return invoke(conversationId, Operation.READ, context ->
+        return invoke(invocationId, Operation.READ, context ->
                 workspaces.readFile(
                         context.workspaceId(),
                         path,
@@ -100,7 +100,7 @@ public class CodingTools {
             value = "Search file contents with ripgrep in the active workspace."
     )
     public String grepSearch(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the code search is needed")
             String description,
             @P(name = "pattern", description = "Text or regular expression to search")
@@ -114,7 +114,7 @@ public class CodingTools {
             @P(name = "limit", description = "Maximum matching lines", required = false)
             Integer limit
     ) {
-        return invoke(conversationId, Operation.READ, context ->
+        return invoke(invocationId, Operation.READ, context ->
                 workspaces.grepSearch(
                         context.workspaceId(),
                         pattern,
@@ -132,7 +132,7 @@ public class CodingTools {
                     + "by read_file."
     )
     public String writeFile(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the file is being written")
             String description,
             @P(name = "path", description = "Workspace-relative file path")
@@ -142,7 +142,7 @@ public class CodingTools {
             @P(name = "expectedRevision", description = "Revision returned by read_file", required = false)
             String expectedRevision
     ) {
-        return invoke(conversationId, Operation.MUTATION, context ->
+        return invoke(invocationId, Operation.MUTATION, context ->
                 workspaces.writeFile(
                         context.workspaceId(),
                         path,
@@ -157,13 +157,13 @@ public class CodingTools {
                     + "headers must use workspace-relative a/ and b/ paths."
     )
     public String applyPatch(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why this patch is needed")
             String description,
             @P(name = "patch", description = "Unified diff patch")
             String patch
     ) {
-        return invoke(conversationId, Operation.MUTATION, context ->
+        return invoke(invocationId, Operation.MUTATION, context ->
                 workspaces.applyPatch(context.workspaceId(), patch));
     }
 
@@ -175,7 +175,7 @@ public class CodingTools {
                     + "pass /workspace."
     )
     public String runCommand(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the command is being run")
             String description,
             @P(name = "command", description = "Shell command to execute")
@@ -183,7 +183,7 @@ public class CodingTools {
             @P(name = "workingDirectory", description = "Workspace-relative directory, or empty for the root; never /workspace", required = false)
             String workingDirectory
     ) {
-        return invoke(conversationId, Operation.COMMAND, context ->
+        return invoke(invocationId, Operation.COMMAND, context ->
                 workspaces.runCommand(
                         context.workspaceId(),
                         command,
@@ -199,7 +199,7 @@ public class CodingTools {
                     + "workspace root; never pass /workspace."
     )
     public String startPreview(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the preview is being started")
             String description,
             @P(name = "command", description = "Foreground command that starts the web server")
@@ -209,7 +209,7 @@ public class CodingTools {
             @P(name = "healthPath", description = "HTTP path used for readiness checks", required = false)
             String healthPath
     ) {
-        return invoke(conversationId, Operation.COMMAND, context ->
+        return invoke(invocationId, Operation.COMMAND, context ->
                 CodingToolResult.success(
                         "Preview is running",
                         previews.start(
@@ -226,11 +226,11 @@ public class CodingTools {
             value = "Inspect the active workspace web preview status and URL."
     )
     public String previewStatus(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why preview status is being checked")
             String description
     ) {
-        return invoke(conversationId, Operation.READ, context ->
+        return invoke(invocationId, Operation.READ, context ->
                 CodingToolResult.success(
                         "Preview status checked",
                         previews.status(context.workspaceId())
@@ -242,11 +242,11 @@ public class CodingTools {
             value = "Read bounded logs from the active workspace web preview."
     )
     public String previewLogs(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why preview logs are being read")
             String description
     ) {
-        return invoke(conversationId, Operation.READ, context ->
+        return invoke(invocationId, Operation.READ, context ->
                 CodingToolResult.success(
                         "Preview logs read",
                         java.util.Map.of(
@@ -261,11 +261,11 @@ public class CodingTools {
             value = "Stop the active workspace web preview."
     )
     public String stopPreview(
-            @ToolMemoryId String conversationId,
+            @ToolMemoryId String invocationId,
             @P(name = "description", description = "Why the preview is being stopped")
             String description
     ) {
-        return invoke(conversationId, Operation.COMMAND, context ->
+        return invoke(invocationId, Operation.COMMAND, context ->
                 CodingToolResult.success(
                         "Preview stopped",
                         previews.stop(context.workspaceId())
@@ -273,14 +273,14 @@ public class CodingTools {
     }
 
     private String invoke(
-            String conversationId,
+            String invocationId,
             Operation operation,
             Function<AgentInvocationContextRegistry.Context, CodingToolResult>
                     action
     ) {
         try {
             AgentInvocationContextRegistry.Context context =
-                    contexts.find(conversationId).orElseThrow(() ->
+                    contexts.find(invocationId).orElseThrow(() ->
                             new CodingToolException(
                                     "WORKSPACE_NOT_BOUND",
                                     "No workspace is bound to this Agent run"

@@ -27,4 +27,8 @@ public class AgentExecutorRegistry {
         }
         return executor;
     }
+
+    public List<String> agentIds() {
+        return executors.keySet().stream().sorted().toList();
+    }
 }

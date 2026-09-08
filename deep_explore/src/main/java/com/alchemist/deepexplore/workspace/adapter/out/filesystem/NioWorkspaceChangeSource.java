@@ -7,6 +7,7 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
@@ -154,7 +155,7 @@ public class NioWorkspaceChangeSource implements WorkspaceChangeSource {
                 return;
             }
             if (event.kind() == StandardWatchEventKinds.ENTRY_CREATE
-                    && Files.isDirectory(child)) {
+                    && Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
                 try {
                     registerTree(child);
                 } catch (IOException ignored) {
@@ -178,7 +179,10 @@ public class NioWorkspaceChangeSource implements WorkspaceChangeSource {
 
         private void registerTree(Path start) throws IOException {
             try (var paths = Files.walk(start)) {
-                paths.filter(Files::isDirectory).forEach(path -> {
+                paths.filter(path -> Files.isDirectory(
+                        path,
+                        LinkOption.NOFOLLOW_LINKS
+                )).forEach(path -> {
                     try {
                         WatchKey key = path.register(
                                 watchService,

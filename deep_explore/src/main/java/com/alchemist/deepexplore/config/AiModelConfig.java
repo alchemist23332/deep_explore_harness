@@ -2,25 +2,53 @@ package com.alchemist.deepexplore.config;
 
 import java.util.Map;
 
+import com.alchemist.deepexplore.agent.adapter.langchain4j.AgentProfileRuntime;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.StreamingAssistant;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.PromptContext;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.SystemPromptRenderer;
-import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchToolAdapter;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.CompositeToolProvider;
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
-import com.alchemist.deepexplore.coding.adapter.in.langchain4j.CodingToolProvider;
+import com.alchemist.deepexplore.agent.domain.AgentProfileDefinition;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class AiModelConfig {
+
+    @Bean("fastProfileDefinition")
+    AgentProfileDefinition fastProfileDefinition(AiModelProperties properties) {
+        return new AgentProfileDefinition(
+                AgentProfile.FAST.id(),
+                "Fast",
+                properties.modelName(),
+                properties.maxCompletionTokens(),
+                properties.reasoningEffort(),
+                properties.fastThinking(),
+                "classpath:prompts/assistant/fast.md",
+                "execution_profile"
+        );
+    }
+
+    @Bean("deepProfileDefinition")
+    AgentProfileDefinition deepProfileDefinition(AiModelProperties properties) {
+        return new AgentProfileDefinition(
+                AgentProfile.DEEP.id(),
+                "Deep",
+                properties.resolvedDeepModelName(),
+                properties.deepMaxCompletionTokens(),
+                properties.deepReasoningEffort(),
+                properties.deepThinking(),
+                "classpath:prompts/assistant/deep.md",
+                "execution_profile"
+        );
+    }
 
     @Bean("fastStreamingChatModel")
     StreamingChatModel fastStreamingChatModel(AiModelProperties properties) {
@@ -49,8 +77,7 @@ public class AiModelConfig {
             @Qualifier("fastStreamingChatModel") StreamingChatModel model,
             LangChain4jMemoryManager chatMemoryManager,
             SystemPromptRenderer systemPromptRenderer,
-            ObjectProvider<WebSearchToolAdapter> webSearchTool,
-            ObjectProvider<CodingToolProvider> codingToolProvider,
+            CompositeToolProvider toolProvider,
             AgentInvocationContextRegistry invocationContexts,
             @Value("${ai.agent.max-tool-calling-round-trips:3}")
             int maxToolCallingRoundTrips
@@ -59,11 +86,10 @@ public class AiModelConfig {
                 model,
                 chatMemoryManager,
                 systemPromptRenderer,
-                webSearchTool.getIfAvailable(),
-                codingToolProvider.getIfAvailable(),
+                toolProvider,
                 invocationContexts,
                 maxToolCallingRoundTrips,
-                AgentProfile.FAST
+                AgentProfile.FAST.id()
         );
     }
 
@@ -72,8 +98,7 @@ public class AiModelConfig {
             @Qualifier("deepStreamingChatModel") StreamingChatModel model,
             LangChain4jMemoryManager chatMemoryManager,
             SystemPromptRenderer systemPromptRenderer,
-            ObjectProvider<WebSearchToolAdapter> webSearchTool,
-            ObjectProvider<CodingToolProvider> codingToolProvider,
+            CompositeToolProvider toolProvider,
             AgentInvocationContextRegistry invocationContexts,
             @Value("${ai.agent.max-tool-calling-round-trips:3}")
             int maxToolCallingRoundTrips
@@ -82,11 +107,34 @@ public class AiModelConfig {
                 model,
                 chatMemoryManager,
                 systemPromptRenderer,
-                webSearchTool.getIfAvailable(),
-                codingToolProvider.getIfAvailable(),
+                toolProvider,
                 invocationContexts,
                 maxToolCallingRoundTrips,
-                AgentProfile.DEEP
+                AgentProfile.DEEP.id()
+        );
+    }
+
+    @Bean
+    AgentProfileRuntime fastProfileRuntime(
+            @Qualifier("fastStreamingAssistant") StreamingAssistant assistant,
+            @Qualifier("fastProfileDefinition") AgentProfileDefinition profile
+    ) {
+        return new AgentProfileRuntime(
+                profile.id(),
+                profile.modelName(),
+                assistant
+        );
+    }
+
+    @Bean
+    AgentProfileRuntime deepProfileRuntime(
+            @Qualifier("deepStreamingAssistant") StreamingAssistant assistant,
+            @Qualifier("deepProfileDefinition") AgentProfileDefinition profile
+    ) {
+        return new AgentProfileRuntime(
+                profile.id(),
+                profile.modelName(),
+                assistant
         );
     }
 
@@ -94,11 +142,10 @@ public class AiModelConfig {
             StreamingChatModel model,
             LangChain4jMemoryManager chatMemoryManager,
             SystemPromptRenderer systemPromptRenderer,
-            WebSearchToolAdapter webSearchTool,
-            CodingToolProvider codingToolProvider,
+            CompositeToolProvider toolProvider,
             AgentInvocationContextRegistry invocationContexts,
             int maxToolCallingRoundTrips,
-            AgentProfile profile
+            String profileId
     ) {
         AiServices<StreamingAssistant> builder = AiServices.builder(
                         StreamingAssistant.class
@@ -107,20 +154,15 @@ public class AiModelConfig {
                 .chatMemoryProvider(chatMemoryManager::create)
                 .systemMessageProviderWithContext(context ->
                         systemPromptRenderer.render(
-                                profile,
+                                profileId,
                                 new PromptContext(
                                         invocationContexts.isBound(
                                                 context.chatMemoryId()
                                         )
                                 )
                         ))
-                .maxToolCallingRoundTrips(maxToolCallingRoundTrips);
-        if (webSearchTool != null) {
-            builder.tools(webSearchTool);
-        }
-        if (codingToolProvider != null) {
-            builder.toolProvider(codingToolProvider);
-        }
+                .maxToolCallingRoundTrips(maxToolCallingRoundTrips)
+                .toolProvider(toolProvider);
         return builder.build();
     }
 

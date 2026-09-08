@@ -36,7 +36,7 @@ class WebSearchToolAdapterTest {
         RecordingClient jina = new RecordingClient(WebSearchProvider.JINA);
         RecordingClient tavily = new RecordingClient(WebSearchProvider.TAVILY);
         WebSearchRoutingContext routing = new WebSearchRoutingContext();
-        routing.bind("conversation-1", WebSearchProvider.TAVILY);
+        routing.bind("run-1", WebSearchProvider.TAVILY);
         WebSearchToolAdapter tool = new WebSearchToolAdapter(
                 List.of(jina, tavily),
                 WebSearchProvider.JINA,
@@ -44,7 +44,7 @@ class WebSearchToolAdapterTest {
                 400
         );
 
-        String result = tool.search("conversation-1", "latest news");
+        String result = tool.search("run-1", "latest news");
 
         assertThat(tavily.query).isEqualTo("latest news");
         assertThat(jina.query).isNull();

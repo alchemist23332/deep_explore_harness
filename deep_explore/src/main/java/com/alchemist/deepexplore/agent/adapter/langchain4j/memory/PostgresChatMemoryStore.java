@@ -29,6 +29,66 @@ public class PostgresChatMemoryStore implements PersistentChatMemoryStore {
     }
 
     @Override
+    public boolean isDirty(Object memoryId) {
+        return jdbcTemplate.query("""
+                        SELECT dirty
+                        FROM conversation_memory
+                        WHERE conversation_id = ?
+                        """,
+                (resultSet, rowNumber) -> resultSet.getBoolean("dirty"),
+                memoryId.toString()
+        ).stream().findFirst().orElse(false);
+    }
+
+    @Override
+    public void markDirty(Object memoryId) {
+        jdbcTemplate.update("""
+                UPDATE conversation_memory
+                SET dirty = TRUE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE conversation_id = ?
+                """, memoryId.toString());
+    }
+
+    @Override
+    public void clearDirty(Object memoryId) {
+        jdbcTemplate.update("""
+                UPDATE conversation_memory
+                SET dirty = FALSE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE conversation_id = ?
+                """, memoryId.toString());
+    }
+
+    @Override
+    public String sourceHeadMessageId(Object memoryId) {
+        return jdbcTemplate.query("""
+                        SELECT source_head_message_id
+                        FROM conversation_memory
+                        WHERE conversation_id = ?
+                        """,
+                resultSet -> resultSet.next()
+                        ? resultSet.getString("source_head_message_id")
+                        : null,
+                memoryId.toString()
+        );
+    }
+
+    @Override
+    public void markSynchronized(
+            Object memoryId,
+            String sourceHeadMessageId
+    ) {
+        jdbcTemplate.update("""
+                UPDATE conversation_memory
+                SET source_head_message_id = ?,
+                    dirty = FALSE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE conversation_id = ?
+                """, sourceHeadMessageId, memoryId.toString());
+    }
+
+    @Override
     public List<ChatMessage> getMessages(Object memoryId) {
         return jdbcTemplate.query("""
                         SELECT messages_json::text

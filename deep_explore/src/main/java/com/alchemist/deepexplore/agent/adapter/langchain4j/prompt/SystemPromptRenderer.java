@@ -1,6 +1,8 @@
 package com.alchemist.deepexplore.agent.adapter.langchain4j.prompt;
 
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
+import com.alchemist.deepexplore.agent.application.AgentProfileRegistry;
+import com.alchemist.deepexplore.agent.domain.AgentProfileDefinition;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -19,32 +21,18 @@ public class SystemPromptRenderer {
             "classpath:prompts/assistant/base.md",
             "assistant_core"
     );
-    private static final Map<AgentProfile, PromptFragment> PROFILES = Map.of(
-            AgentProfile.FAST,
-            new PromptFragment(
-                    "profile-fast",
-                    200,
-                    "classpath:prompts/assistant/fast.md",
-                    "execution_profile"
-            ),
-            AgentProfile.DEEP,
-            new PromptFragment(
-                    "profile-deep",
-                    200,
-                    "classpath:prompts/assistant/deep.md",
-                    "execution_profile"
-            )
-    );
-
     private final SystemPromptCatalog catalog;
+    private final AgentProfileRegistry profiles;
     private final List<SystemPromptContributor> contributors;
     private final Map<CacheKey, String> cache = new ConcurrentHashMap<>();
 
     public SystemPromptRenderer(
             SystemPromptCatalog catalog,
+            AgentProfileRegistry profiles,
             List<SystemPromptContributor> contributors
     ) {
         this.catalog = catalog;
+        this.profiles = profiles;
         this.contributors = List.copyOf(contributors);
     }
 
@@ -53,26 +41,35 @@ public class SystemPromptRenderer {
     }
 
     public String render(AgentProfile profile, PromptContext context) {
-        if (profile == null) {
+        return render(profile == null ? null : profile.id(), context);
+    }
+
+    public String render(String profileId, PromptContext context) {
+        if (profileId == null || profileId.isBlank()) {
             throw new IllegalArgumentException("Agent profile must not be null");
         }
         PromptContext resolvedContext = context == null
                 ? PromptContext.DEFAULT
                 : context;
         return cache.computeIfAbsent(
-                new CacheKey(profile, resolvedContext),
+                new CacheKey(profileId, resolvedContext),
                 this::renderUncached
         );
     }
 
     private String renderUncached(CacheKey key) {
-        AgentProfile profile = key.profile();
+        AgentProfileDefinition profile = profiles.require(key.profileId());
         List<PromptFragment> fragments = new ArrayList<>();
         fragments.add(CORE);
-        fragments.add(PROFILES.get(profile));
+        fragments.add(new PromptFragment(
+                "profile-" + profile.id(),
+                200,
+                profile.promptResource(),
+                profile.promptRootElement()
+        ));
         for (SystemPromptContributor contributor : contributors) {
             if (contributor.supports(key.context())) {
-                fragments.addAll(contributor.fragments(profile));
+                fragments.addAll(contributor.fragments(profile.id()));
             }
         }
         validateUniqueIds(fragments);
@@ -114,7 +111,7 @@ public class SystemPromptRenderer {
     }
 
     private record CacheKey(
-            AgentProfile profile,
+            String profileId,
             PromptContext context
     ) {
     }

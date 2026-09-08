@@ -1,11 +1,13 @@
 package com.alchemist.deepexplore.coding.adapter.in.langchain4j;
 
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.LangChainToolProvider;
+import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
+import com.alchemist.deepexplore.agent.spi.ToolDescriptorContributor;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolSpecifications;
 import dev.langchain4j.service.tool.AiServiceTool;
 import dev.langchain4j.service.tool.DefaultToolExecutor;
-import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderRequest;
 import dev.langchain4j.service.tool.ToolProviderResult;
 import java.lang.reflect.Method;
@@ -24,7 +26,8 @@ import org.springframework.stereotype.Component;
         havingValue = "true",
         matchIfMissing = true
 )
-public class CodingToolProvider implements ToolProvider {
+public class CodingToolProvider
+        implements LangChainToolProvider, ToolDescriptorContributor {
 
     private final AgentInvocationContextRegistry contexts;
     private final List<AiServiceTool> tools;
@@ -62,6 +65,34 @@ public class CodingToolProvider implements ToolProvider {
         return ToolProviderResult.builder()
                 .addAll(tools)
                 .build();
+    }
+
+    @Override
+    public List<ToolDescriptor> toolDescriptors() {
+        return List.of(
+                descriptor("list_files", "浏览文件"),
+                descriptor("read_file", "读取文件"),
+                descriptor("grep_search", "搜索代码"),
+                descriptor("write_file", "写入文件"),
+                descriptor("apply_patch", "应用补丁"),
+                descriptor("run_command", "运行命令"),
+                descriptor("start_preview", "启动预览"),
+                descriptor("preview_status", "检查预览"),
+                descriptor("preview_logs", "读取预览日志"),
+                descriptor("stop_preview", "停止预览")
+        );
+    }
+
+    private static ToolDescriptor descriptor(
+            String name,
+            String displayName
+    ) {
+        return new ToolDescriptor(
+                name,
+                displayName,
+                ToolDescriptor.ArgumentExposure.DESCRIPTION,
+                ToolDescriptor.ResultExposure.SUMMARY
+        );
     }
 
     private static String toolName(Method method) {

@@ -21,7 +21,9 @@ class RuntimeConfigControllerTest {
                 "deepseek-v4-pro",
                 true,
                 "JINA",
-                List.of("JINA", "TAVILY")
+                List.of("JINA", "TAVILY"),
+                List.of("assistant"),
+                List.of()
         ));
         WebTestClient webTestClient = WebTestClient
                 .bindToController(new RuntimeConfigController(service))

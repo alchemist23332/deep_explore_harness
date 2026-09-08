@@ -15,8 +15,42 @@ public record AgentRun(
         String errorMessage,
         Instant createdAt,
         Instant startedAt,
-        Instant completedAt
+        Instant completedAt,
+        long version
 ) {
+
+    public AgentRun(
+            String id,
+            String conversationId,
+            String workspaceId,
+            String userMessageId,
+            String assistantMessageId,
+            String agentId,
+            String profileId,
+            RunStatus status,
+            String errorCode,
+            String errorMessage,
+            Instant createdAt,
+            Instant startedAt,
+            Instant completedAt
+    ) {
+        this(
+                id,
+                conversationId,
+                workspaceId,
+                userMessageId,
+                assistantMessageId,
+                agentId,
+                profileId,
+                status,
+                errorCode,
+                errorMessage,
+                createdAt,
+                startedAt,
+                completedAt,
+                0
+        );
+    }
 
     public AgentRun(
             String id,
@@ -45,7 +79,8 @@ public record AgentRun(
                 errorMessage,
                 createdAt,
                 startedAt,
-                completedAt
+                completedAt,
+                0
         );
     }
 }

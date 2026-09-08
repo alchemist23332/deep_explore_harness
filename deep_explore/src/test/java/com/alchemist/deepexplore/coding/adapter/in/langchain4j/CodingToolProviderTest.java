@@ -39,14 +39,14 @@ class CodingToolProviderTest {
 
         assertThat(provider.isDynamic()).isFalse();
         assertThat(provider.provideTools(
-                request("conversation-1")
+                request("run-1")
         ).aiServiceTools())
                 .isEmpty();
 
-        contexts.bind("conversation-1", "run-1", "workspace-1");
+        contexts.bind("run-1", "conversation-1", "workspace-1");
 
         assertThat(provider.provideTools(
-                request("conversation-1")
+                request("run-1")
         ).aiServiceTools())
                 .hasSize(10)
                 .extracting(tool -> tool.toolSpecification().name())

@@ -33,9 +33,12 @@ public class RunPersistenceService {
     }
 
     @Transactional
-    public void start(AgentRun run, RunEventEnvelope startedEvent) {
+    public RunEventEnvelope start(
+            AgentRun run,
+            RunEventEnvelope startedEvent
+    ) {
         runStore.create(run);
-        eventStore.append(startedEvent);
+        return eventStore.append(startedEvent);
     }
 
     @Transactional
@@ -49,12 +52,13 @@ public class RunPersistenceService {
         return checkpoint;
     }
 
-    public void appendEvent(RunEventEnvelope event) {
-        eventStore.append(event);
+    @Transactional
+    public RunEventEnvelope appendEvent(RunEventEnvelope event) {
+        return eventStore.append(event);
     }
 
     @Transactional
-    public void complete(
+    public RunEventEnvelope complete(
             AgentRun run,
             AgentExecutionEvent.Completed completed,
             RunEventEnvelope completedEvent
@@ -69,24 +73,51 @@ public class RunPersistenceService {
                 completed.model(),
                 completed.tokenUsage()
         );
-        runStore.complete(run.id());
-        eventStore.append(completedEvent);
+        requireTransition(
+                runStore.complete(run.id(), run.version()),
+                run.id(),
+                "COMPLETED"
+        );
+        return eventStore.append(completedEvent);
     }
 
     @Transactional
-    public void fail(
+    public RunEventEnvelope fail(
             AgentRun run,
             String code,
             String message,
             RunEventEnvelope failedEvent
     ) {
-        runStore.fail(run.id(), code, message);
-        eventStore.append(failedEvent);
+        requireTransition(
+                runStore.fail(run.id(), run.version(), code, message),
+                run.id(),
+                "FAILED"
+        );
+        return eventStore.append(failedEvent);
     }
 
     @Transactional
-    public void cancel(AgentRun run, RunEventEnvelope cancelledEvent) {
-        runStore.cancel(run.id());
-        eventStore.append(cancelledEvent);
+    public RunEventEnvelope cancel(
+            AgentRun run,
+            RunEventEnvelope cancelledEvent
+    ) {
+        requireTransition(
+                runStore.cancel(run.id(), run.version()),
+                run.id(),
+                "CANCELLED"
+        );
+        return eventStore.append(cancelledEvent);
+    }
+
+    private static void requireTransition(
+            boolean updated,
+            String runId,
+            String targetStatus
+    ) {
+        if (!updated) {
+            throw new IllegalStateException(
+                    "Run " + runId + " cannot transition to " + targetStatus
+            );
+        }
     }
 }

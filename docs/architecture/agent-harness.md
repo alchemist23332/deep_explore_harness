@@ -60,19 +60,23 @@ ArchUnit tests enforce these rules.
 
 ## Runtime Flow
 
-1. `ChatController` maps the HTTP request to a framework-neutral `ChatCommand`.
-2. `ChatStreamService` resolves the Agent profile and task-level
-   `searchProvider`, then delegates to `HarnessService`.
+1. `RunController` maps the request to a framework-neutral `ChatCommand`.
+2. `RunExecutionManager` starts the Harness independently of the SSE
+   subscriber and returns the durable `runId`. `ChatController` remains a
+   compatibility facade.
 3. `ConversationContextLoader` opens the conversation and `RunFactory` creates
    the `AgentRun` and `RunSession`; the Harness emits `RunStarted`.
-4. The Harness acquires the conversation lock, then
+4. The Harness acquires an owner-scoped conversation lease, then
    `ConversationContextLoader` reads canonical history through Conversation
-   ports.
+   ports. `RunSession` renews the lease while the Run is active.
 5. The Agent adapter prepares ChatMemory from the supplied history when needed,
    and the snapshot is persisted as a checkpoint.
 6. The user message is appended to complete conversation history.
 7. `AgentExecutorRegistry` selects an executor by `agentId`.
 8. `LangChain4jAgentExecutor` starts the AI Services ReAct loop.
+   The AI Services `@MemoryId` is the Run ID, while the memory provider resolves
+   it back to the Conversation ID for persistent ChatMemory. Tool invocation
+   state is therefore isolated per Run.
 9. When a Run carries a `workspaceId`, the Tool provider exposes
    workspace-scoped coding and preview tools and adds the coding prompt
    fragment. The provider is evaluated once per invocation because the
@@ -83,16 +87,17 @@ ArchUnit tests enforce these rules.
 11. Tool and text events are converted to framework-neutral execution events.
     The HTTP facade emits sanitized `tool_start` and `tool_end` SSE payloads;
     raw arguments and results are not exposed to the browser.
-12. The Harness assigns ordered event sequence numbers. Lifecycle, checkpoint,
-    tool, approval, and artifact events are persisted. High-volume
-    `TextDelta` events remain live SSE data; the complete assistant message is
-    committed transactionally when the Run completes.
-13. `RunSession` owns terminal transitions, cancellation, checkpoint restore,
+12. PostgreSQL atomically assigns event sequence numbers. All lifecycle, tool,
+    text, approval, artifact, and terminal events are persisted before live
+    publication, allowing replay from `afterSequence`.
+13. `RunSession` owns terminal transitions, cancellation, lease renewal,
     Executor cleanup, and ordered event envelopes.
 14. Completion writes the assistant message and closes the Run.
-15. Failure or cancellation restores the checkpoint. Executor state is
-    released before the conversation lock so the next Run cannot be cleared by
-    a previous Run's cleanup.
+15. Failure or cancellation marks provider ChatMemory dirty. The next Run
+    rebuilds it from canonical `messages`, including the retained user message.
+    Checkpoints remain available for a future explicit resume flow.
+16. Executor state and the conversation lease are released with the current
+    Run owner ID and lease version, so stale cleanup cannot clear a newer Run.
 
 The ReAct loop is intentionally delegated to LangChain4j AI Services. The
 Harness owns the outer durable Run lifecycle and does not duplicate provider
@@ -100,10 +105,10 @@ tool-call parsing or result-message construction.
 
 ## Compatibility
 
-`POST /api/chat/stream`, `/api/config`, and the existing SSE event names and
-payload fields remain unchanged. The former `api` package and `AgentService`
-compatibility facade were removed; new code depends on `ChatStreamService`,
-`HarnessService`, `AgentExecutor`, and typed `RunEvent` contracts.
+The frontend uses `POST /api/runs`, `GET /api/runs/{runId}/events`, and
+`POST /api/runs/{runId}/cancel`. SSE disconnection only removes an observer;
+it does not cancel the Run. `POST /api/chat/stream` remains available as a
+compatibility facade.
 
 The frontend renders tool activity as an assistant-ui `data` message part.
 `GET /api/conversations/{conversationId}/run-activities` reconstructs the same
@@ -133,7 +138,8 @@ single user message can produce multiple Runs when regenerated.
 `messages` remains the canonical user-visible history. The Harness maps its
 latest branch to framework-neutral `AgentMessage` values. The LangChain4j
 adapter may persist provider-specific ChatMemory in `conversation_memory`, but
-it no longer reads Conversation stores directly.
+it no longer reads Conversation stores directly. A persistent `dirty` marker
+forces reconstruction from canonical history after failed or cancelled Runs.
 
 Each coding Run stores its nullable `workspace_id`. The Agent invocation
 context binds that Run to one workspace while it is active; Coding Tools never
@@ -159,7 +165,7 @@ full command output.
 
 System prompts are XML-structured Markdown resources under
 `src/main/resources/prompts`. `SystemPromptRenderer` combines the common
-assistant policy, the selected fast/deep profile, and prompt fragments
+assistant policy, the selected profile definition, and prompt fragments
 contributed by enabled capabilities. It validates fragment IDs, ordering,
 resource availability, and XML roots before the assistant bean is available.
 
@@ -168,6 +174,8 @@ not. An enabled tool registers a `SystemPromptContributor`; disabling the tool
 removes both its LangChain4j tool bean and its policy from the rendered system
 message. `AiModelConfig` only injects the rendered document through
 LangChain4j's `systemMessageProvider` and contains no tool-specific prompt text.
+`ToolDescriptorRegistry` owns display metadata and event exposure rules;
+`CompositeToolProvider` discovers tool providers without central switches.
 
 ## Extension Rules
 
@@ -189,19 +197,19 @@ To add a tool or approval flow:
 
 To add another model profile:
 
-1. Add the profile to `AgentProfile` and its model configuration.
-2. Resolve model-specific behavior inside the Agent adapter.
-3. Do not add provider branches to the Harness.
+1. Register an `AgentProfileDefinition` bean.
+2. Register the corresponding `AgentProfileRuntime` bean.
+3. Send its string ID as `profileId`; no Harness or prompt renderer branch is
+   required.
 
 ## Deferred Work
 
-- User and tenant ownership
 - Resume endpoint based on checkpoints
-- Tool registry and approval API
 - Artifact storage
 - Human approval and resumable execution for destructive coding operations
 - Per-Run workspace change journal and rollback
 - Graph or multi-agent orchestration when deterministic workflow branching is
   required
-- Optional resumable live-delta transport when reconnect support is required
+- Request-scoped multi-tenant identity beyond the current deployment-scoped
+  tenant/owner boundary
 - OpenTelemetry traces and metrics

@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -31,14 +32,26 @@ public class RunActivityQueryService {
     }
 
     public List<RunActivityView> list(String conversationId) {
+        Map<String, List<RunEventEnvelope>> eventsByRun =
+                eventStore.listByConversation(conversationId).stream()
+                        .collect(Collectors.groupingBy(
+                                RunEventEnvelope::runId,
+                                LinkedHashMap::new,
+                                Collectors.toList()
+                        ));
         return runStore.listByConversation(conversationId).stream()
-                .map(this::toActivity)
+                .map(run -> toActivity(
+                        run,
+                        eventsByRun.getOrDefault(run.id(), List.of())
+                ))
                 .filter(activity -> !activity.tools().isEmpty())
                 .toList();
     }
 
-    private RunActivityView toActivity(AgentRun run) {
-        List<RunEventEnvelope> events = eventStore.list(run.id(), 0);
+    private RunActivityView toActivity(
+            AgentRun run,
+            List<RunEventEnvelope> events
+    ) {
         Map<String, MutableToolActivity> tools = new LinkedHashMap<>();
         String provider = provider(events);
 

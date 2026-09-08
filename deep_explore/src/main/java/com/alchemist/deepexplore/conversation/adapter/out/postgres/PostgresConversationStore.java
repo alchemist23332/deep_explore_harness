@@ -2,6 +2,7 @@ package com.alchemist.deepexplore.conversation.adapter.out.postgres;
 
 import com.alchemist.deepexplore.conversation.domain.Conversation;
 import com.alchemist.deepexplore.conversation.port.ConversationStore;
+import com.alchemist.deepexplore.config.SecurityProperties;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -15,9 +16,14 @@ import org.springframework.transaction.annotation.Transactional;
 public class PostgresConversationStore implements ConversationStore {
 
     private final JdbcTemplate jdbcTemplate;
+    private final SecurityProperties security;
 
-    public PostgresConversationStore(JdbcTemplate jdbcTemplate) {
+    public PostgresConversationStore(
+            JdbcTemplate jdbcTemplate,
+            SecurityProperties security
+    ) {
         this.jdbcTemplate = jdbcTemplate;
+        this.security = security;
     }
 
     @Override
@@ -27,10 +33,15 @@ public class PostgresConversationStore implements ConversationStore {
                 ? UUID.randomUUID().toString()
                 : requestedId;
         jdbcTemplate.update("""
-                INSERT INTO conversations (id, title)
-                VALUES (?, ?)
+                INSERT INTO conversations (id, title, tenant_id, owner_id)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT (id) DO NOTHING
-                """, id, normalizeTitle(title));
+                """,
+                id,
+                normalizeTitle(title),
+                security.tenantId(),
+                security.ownerId()
+        );
         return find(id).orElseThrow();
     }
 
@@ -40,6 +51,8 @@ public class PostgresConversationStore implements ConversationStore {
                         SELECT id, title, status, head_message_id, created_at, updated_at
                         FROM conversations
                         WHERE id = ?
+                          AND tenant_id = ?
+                          AND owner_id = ?
                         """,
                 (resultSet, rowNum) -> new Conversation(
                         resultSet.getString("id"),
@@ -49,7 +62,9 @@ public class PostgresConversationStore implements ConversationStore {
                         toInstant(resultSet.getObject("created_at", OffsetDateTime.class)),
                         toInstant(resultSet.getObject("updated_at", OffsetDateTime.class))
                 ),
-                conversationId
+                conversationId,
+                security.tenantId(),
+                security.ownerId()
         ).stream().findFirst();
     }
 
@@ -58,6 +73,8 @@ public class PostgresConversationStore implements ConversationStore {
         return jdbcTemplate.query("""
                 SELECT id, title, status, head_message_id, created_at, updated_at
                 FROM conversations
+                WHERE tenant_id = ?
+                  AND owner_id = ?
                 ORDER BY updated_at DESC
                 """, (resultSet, rowNum) -> new Conversation(
                 resultSet.getString("id"),
@@ -66,7 +83,7 @@ public class PostgresConversationStore implements ConversationStore {
                 resultSet.getString("head_message_id"),
                 toInstant(resultSet.getObject("created_at", OffsetDateTime.class)),
                 toInstant(resultSet.getObject("updated_at", OffsetDateTime.class))
-        ));
+        ), security.tenantId(), security.ownerId());
     }
 
     @Override
@@ -75,7 +92,14 @@ public class PostgresConversationStore implements ConversationStore {
                 UPDATE conversations
                 SET title = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-                """, normalizeTitle(title), conversationId);
+                  AND tenant_id = ?
+                  AND owner_id = ?
+                """,
+                normalizeTitle(title),
+                conversationId,
+                security.tenantId(),
+                security.ownerId()
+        );
     }
 
     @Override
@@ -84,12 +108,28 @@ public class PostgresConversationStore implements ConversationStore {
                 UPDATE conversations
                 SET status = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-                """, status.name(), conversationId);
+                  AND tenant_id = ?
+                  AND owner_id = ?
+                """,
+                status.name(),
+                conversationId,
+                security.tenantId(),
+                security.ownerId()
+        );
     }
 
     @Override
     public void delete(String conversationId) {
-        jdbcTemplate.update("DELETE FROM conversations WHERE id = ?", conversationId);
+        jdbcTemplate.update("""
+                DELETE FROM conversations
+                WHERE id = ?
+                  AND tenant_id = ?
+                  AND owner_id = ?
+                """,
+                conversationId,
+                security.tenantId(),
+                security.ownerId()
+        );
     }
 
     private static String normalizeTitle(String title) {

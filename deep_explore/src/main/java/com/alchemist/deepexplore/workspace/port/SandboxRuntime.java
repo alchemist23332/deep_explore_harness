@@ -11,6 +11,10 @@ public interface SandboxRuntime {
 
     RuntimeInstance start(Workspace workspace);
 
+    void pause(String containerId);
+
+    void resume(String containerId);
+
     void stop(String containerId);
 
     CommandResult execute(

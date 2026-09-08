@@ -26,21 +26,32 @@ public class ChatStreamService {
     }
 
     public ChatStream stream(ChatCommand command) {
+        StartRunCommand startRun = toStartRun(command);
+        return new ChatStream(
+                startRun.searchProvider(),
+                harness.start(startRun)
+        );
+    }
+
+    public StartRunCommand toStartRun(ChatCommand command) {
         WebSearchProvider searchProvider = command.searchProvider() == null
                 ? defaultSearchProvider
                 : command.searchProvider();
-        StartRunCommand startRun = new StartRunCommand(
+        String agentId = command.agentId() == null
+                || command.agentId().isBlank()
+                ? defaultAgentId
+                : command.agentId();
+        return new StartRunCommand(
                 command.conversationId(),
                 command.message(),
-                defaultAgentId,
-                command.profile().id(),
+                agentId,
+                command.resolvedProfileId(),
                 command.userMessageId(),
                 command.userParentMessageId(),
                 command.assistantMessageId(),
                 searchProvider,
                 command.workspaceId()
         );
-        return new ChatStream(searchProvider, harness.start(startRun));
     }
 
     public record ChatStream(
