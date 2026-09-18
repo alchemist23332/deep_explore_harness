@@ -12,9 +12,16 @@ public interface RunStore {
 
     List<AgentRun> listByConversation(String conversationId);
 
-    void complete(String runId);
+    List<AgentRun> listRunning();
 
-    void fail(String runId, String errorCode, String errorMessage);
+    boolean complete(String runId, long expectedVersion);
 
-    void cancel(String runId);
+    boolean fail(
+            String runId,
+            long expectedVersion,
+            String errorCode,
+            String errorMessage
+    );
+
+    boolean cancel(String runId, long expectedVersion);
 }

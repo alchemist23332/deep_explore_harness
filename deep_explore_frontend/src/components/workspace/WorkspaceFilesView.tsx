@@ -27,6 +27,7 @@ import {
 interface EditorBuffer {
   content: string
   savedContent: string
+  revision: string
 }
 
 export function WorkspaceFilesView({
@@ -80,6 +81,7 @@ export function WorkspaceFilesView({
         [file.path]: {
           content: file.content,
           savedContent: file.content,
+          revision: file.revision,
         },
       }))
       setOpenPaths((current) =>
@@ -116,12 +118,14 @@ export function WorkspaceFilesView({
         workspaceId,
         selectedFilePath,
         activeBuffer.content,
+        activeBuffer.revision,
       )
       setBuffers((current) => ({
         ...current,
         [file.path]: {
           content: file.content,
           savedContent: file.content,
+          revision: file.revision,
         },
       }))
       setRefreshKey((value) => value + 1)

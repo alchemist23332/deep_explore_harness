@@ -31,6 +31,7 @@ public class WorkspaceExceptionHandler {
             case "SANDBOX_NOT_RUNNING",
                  "WORKSPACE_ENTRY_CONFLICT",
                  "WORKSPACE_DIRECTORY_NOT_EMPTY",
+                 "WORKSPACE_FILE_CHANGED",
                  "TERMINAL_SESSION_LIMIT" -> HttpStatus.CONFLICT;
             case "WORKSPACE_ENTRY_NOT_FOUND",
                  "WORKSPACE_DIRECTORY_NOT_FOUND",

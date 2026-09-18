@@ -7,11 +7,17 @@ import static org.mockito.Mockito.when;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchRoutingContext;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolBatchRegistry;
+import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
+import com.alchemist.deepexplore.agent.application.ToolDescriptorRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionRequest;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.WebSearchProvider;
+import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
+import com.alchemist.deepexplore.config.AgentLoopProperties;
 import com.alchemist.deepexplore.config.AiModelProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.invocation.InvocationContext;
@@ -20,6 +26,7 @@ import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.PartialToolCall;
 import dev.langchain4j.model.chat.response.PartialToolCallContext;
+import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.service.TokenStream;
@@ -32,6 +39,7 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
+import reactor.core.Disposable;
 import reactor.test.StepVerifier;
 
 class LangChain4jAgentExecutorTest {
@@ -40,18 +48,24 @@ class LangChain4jAgentExecutorTest {
     void emitsToolLifecycleAndFinalResponse() {
         StreamingAssistant fastAssistant = mock(StreamingAssistant.class);
         StreamingAssistant deepAssistant = mock(StreamingAssistant.class);
-        when(fastAssistant.chat("conversation-1", "latest news"))
+        when(fastAssistant.chat("run-1", "latest news"))
                 .thenReturn(new ToolCallingTokenStream());
         WebSearchRoutingContext routingContext =
                 mock(WebSearchRoutingContext.class);
+        AgentInvocationContextRegistry invocationContexts =
+                mock(AgentInvocationContextRegistry.class);
 
         LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
                 "assistant",
-                fastAssistant,
-                deepAssistant,
+                runtimes(fastAssistant, deepAssistant),
+                loopProperties(),
                 properties(),
                 mock(LangChain4jMemoryManager.class),
                 routingContext,
+                invocationContexts,
+                mock(ToolBatchRegistry.class),
+                toolDescriptors(),
+                new ObjectMapper(),
                 12
         );
 
@@ -61,7 +75,8 @@ class LangChain4jAgentExecutorTest {
                         "assistant",
                         AgentProfile.FAST.id(),
                         "latest news",
-                        WebSearchProvider.TAVILY
+                        WebSearchProvider.TAVILY,
+                        "workspace-1"
                 )))
                 .assertNext(event -> {
                     var started = (AgentExecutionEvent.ToolCallStarted) event;
@@ -71,9 +86,7 @@ class LangChain4jAgentExecutorTest {
                 .assertNext(event -> {
                     var completed = (AgentExecutionEvent.ToolCallCompleted) event;
                     assertThat(completed.success()).isTrue();
-                    assertThat(completed.result())
-                            .startsWith("0123456789ab")
-                            .contains("truncated for run event");
+                    assertThat(completed.result()).isNull();
                 })
                 .assertNext(event -> {
                     var completed = (AgentExecutionEvent.Completed) event;
@@ -84,10 +97,192 @@ class LangChain4jAgentExecutorTest {
                 .verifyComplete();
 
         verify(routingContext).bind(
-                "conversation-1",
+                "run-1",
                 WebSearchProvider.TAVILY
         );
-        verify(routingContext).clear("conversation-1");
+        verify(routingContext).clear("run-1");
+        verify(invocationContexts).bind(
+                "run-1",
+                "conversation-1",
+                "workspace-1"
+        );
+        verify(invocationContexts).clear("run-1");
+    }
+
+    @Test
+    void cancelsHandlePublishedAfterSubscriberCancellation() {
+        StreamingAssistant fastAssistant = mock(StreamingAssistant.class);
+        DelayedTokenStream stream = new DelayedTokenStream();
+        when(fastAssistant.chat("run-1", "wait"))
+                .thenReturn(stream);
+        LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
+                "assistant",
+                runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
+                properties(),
+                mock(LangChain4jMemoryManager.class),
+                mock(WebSearchRoutingContext.class),
+                mock(AgentInvocationContextRegistry.class),
+                mock(ToolBatchRegistry.class),
+                toolDescriptors(),
+                new ObjectMapper(),
+                1_000
+        );
+        StreamingHandle handle = mock(StreamingHandle.class);
+        PartialResponseContext context = mock(PartialResponseContext.class);
+        when(context.streamingHandle()).thenReturn(handle);
+
+        Disposable subscription = executor.execute(new AgentExecutionRequest(
+                "run-1",
+                "conversation-1",
+                "assistant",
+                AgentProfile.FAST.id(),
+                "wait"
+        )).subscribe();
+        subscription.dispose();
+        stream.publishHandle(context);
+
+        verify(handle).cancel();
+    }
+
+    @Test
+    void removesCodingPayloadsFromRunEvents() {
+        StreamingAssistant fastAssistant = mock(StreamingAssistant.class);
+        when(fastAssistant.chat("run-1", "change file"))
+                .thenReturn(new ToolCallingTokenStream(
+                        "write_file",
+                        "{\"description\":\"Update app\","
+                                + "\"path\":\"App.java\","
+                                + "\"content\":\"secret source\"}",
+                        "{\"ok\":true,\"summary\":\"Wrote App.java\","
+                                + "\"data\":{\"content\":\"secret source\"}}"
+                ));
+        AgentInvocationContextRegistry invocationContexts =
+                mock(AgentInvocationContextRegistry.class);
+        LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
+                "assistant",
+                runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
+                properties(),
+                mock(LangChain4jMemoryManager.class),
+                mock(WebSearchRoutingContext.class),
+                invocationContexts,
+                mock(ToolBatchRegistry.class),
+                toolDescriptors(),
+                new ObjectMapper(),
+                1_000
+        );
+
+        StepVerifier.create(executor.execute(new AgentExecutionRequest(
+                        "run-1",
+                        "conversation-1",
+                        "assistant",
+                        AgentProfile.FAST.id(),
+                        "change file",
+                        WebSearchProvider.TAVILY,
+                        "workspace-1"
+                )))
+                .assertNext(event -> {
+                    var started = (AgentExecutionEvent.ToolCallStarted) event;
+                    assertThat(started.argumentsJson())
+                            .isEqualTo("{\"description\":\"Update app\"}");
+                })
+                .assertNext(event -> {
+                    var completed =
+                            (AgentExecutionEvent.ToolCallCompleted) event;
+                    assertThat(completed.result())
+                            .contains("\"summary\":\"Wrote App.java\"")
+                            .contains("\"ok\":true")
+                            .doesNotContain("secret source");
+                })
+                .expectNextCount(1)
+                .verifyComplete();
+    }
+
+    @Test
+    void reportsToolRoundLimitSeparatelyFromModelFailures() {
+        StreamingAssistant fastAssistant = mock(StreamingAssistant.class);
+        when(fastAssistant.chat("run-1", "large coding task"))
+                .thenReturn(new ToolCallingTokenStream(
+                        new RuntimeException(
+                                "Something is wrong, exceeded 16 tool calling "
+                                        + "round trips "
+                                        + "(maxToolCallingRoundTrips)"
+                        )
+                ));
+        AgentInvocationContextRegistry invocationContexts =
+                mock(AgentInvocationContextRegistry.class);
+        LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
+                "assistant",
+                runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
+                properties(),
+                mock(LangChain4jMemoryManager.class),
+                mock(WebSearchRoutingContext.class),
+                invocationContexts,
+                mock(ToolBatchRegistry.class),
+                toolDescriptors(),
+                new ObjectMapper(),
+                1_000
+        );
+
+        StepVerifier.create(executor.execute(new AgentExecutionRequest(
+                        "run-1",
+                        "conversation-1",
+                        "assistant",
+                        AgentProfile.FAST.id(),
+                        "large coding task",
+                        WebSearchProvider.TAVILY,
+                        "workspace-1"
+                )))
+                .assertNext(event -> {
+                    var failed = (AgentExecutionEvent.Failed) event;
+                    assertThat(failed.code())
+                            .isEqualTo("TOOL_ROUND_LIMIT_EXCEEDED");
+                    assertThat(failed.message()).contains("工具调用轮次");
+                })
+                .verifyComplete();
+        verify(invocationContexts).clear("run-1");
+    }
+
+    @Test
+    void reportsSynchronouslyThrownToolRoundLimitSeparately() {
+        RuntimeException roundLimit = new RuntimeException(
+                "Exceeded tool rounds (maxToolCallingRoundTrips)"
+        );
+        StreamingAssistant fastAssistant = mock(StreamingAssistant.class);
+        when(fastAssistant.chat("run-1", "large coding task"))
+                .thenReturn(new ToolCallingTokenStream(roundLimit, true));
+        AgentInvocationContextRegistry invocationContexts =
+                mock(AgentInvocationContextRegistry.class);
+        LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
+                "assistant",
+                runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
+                properties(),
+                mock(LangChain4jMemoryManager.class),
+                mock(WebSearchRoutingContext.class),
+                invocationContexts,
+                mock(ToolBatchRegistry.class),
+                toolDescriptors(),
+                new ObjectMapper(),
+                1_000
+        );
+
+        StepVerifier.create(executor.execute(new AgentExecutionRequest(
+                        "run-1",
+                        "conversation-1",
+                        "assistant",
+                        AgentProfile.FAST.id(),
+                        "large coding task",
+                        WebSearchProvider.TAVILY,
+                        "workspace-1"
+                )))
+                .assertNext(event -> assertThat(
+                        ((AgentExecutionEvent.Failed) event).code()
+                ).isEqualTo("TOOL_ROUND_LIMIT_EXCEEDED"))
+                .verifyComplete();
+        verify(invocationContexts).clear("run-1");
     }
 
     private static AiModelProperties properties() {
@@ -110,11 +305,165 @@ class LangChain4jAgentExecutorTest {
         );
     }
 
+    private static AgentLoopProperties loopProperties() {
+        return new AgentLoopProperties(24, 64);
+    }
+
+    private static AgentProfileRuntimeRegistry runtimes(
+            StreamingAssistant fast,
+            StreamingAssistant deep
+    ) {
+        return new AgentProfileRuntimeRegistry(List.of(
+                new AgentProfileRuntime(
+                        AgentProfile.FAST.id(),
+                        "deepseek-v4-flash",
+                        fast
+                ),
+                new AgentProfileRuntime(
+                        AgentProfile.DEEP.id(),
+                        "deepseek-v4-pro",
+                        deep
+                )
+        ));
+    }
+
+    private static ToolDescriptorRegistry toolDescriptors() {
+        return new ToolDescriptorRegistry(List.of(() -> List.of(
+                new ToolDescriptor(
+                        "web_search",
+                        "网页搜索",
+                        ToolDescriptor.ArgumentExposure.QUERY,
+                        ToolDescriptor.ResultExposure.NONE
+                ),
+                new ToolDescriptor(
+                        "write_file",
+                        "写入文件",
+                        ToolDescriptor.ArgumentExposure.DESCRIPTION,
+                        ToolDescriptor.ResultExposure.SUMMARY
+                )
+        )));
+    }
+
+    private static final class DelayedTokenStream implements TokenStream {
+
+        private BiConsumer<PartialResponse, PartialResponseContext>
+                partialResponseHandler;
+
+        void publishHandle(PartialResponseContext context) {
+            partialResponseHandler.accept(null, context);
+        }
+
+        @Override
+        public TokenStream onPartialResponse(Consumer<String> handler) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialResponseWithContext(
+                BiConsumer<PartialResponse, PartialResponseContext> handler
+        ) {
+            partialResponseHandler = handler;
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialToolCallWithContext(
+                BiConsumer<PartialToolCall, PartialToolCallContext> handler
+        ) {
+            return this;
+        }
+
+        @Override
+        public TokenStream beforeToolExecution(
+                Consumer<BeforeToolExecution> handler
+        ) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onRetrieved(Consumer<List<Content>> handler) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onToolExecuted(Consumer<ToolExecution> handler) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onCompleteResponse(Consumer<ChatResponse> handler) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onError(Consumer<Throwable> handler) {
+            return this;
+        }
+
+        @Override
+        public TokenStream ignoreErrors() {
+            return this;
+        }
+
+        @Override
+        public void start() {
+        }
+    }
+
     private static final class ToolCallingTokenStream implements TokenStream {
 
+        private final String toolName;
+        private final String arguments;
+        private final String resultText;
+        private final Throwable failure;
+        private final boolean throwSynchronously;
         private Consumer<BeforeToolExecution> beforeToolExecution;
         private Consumer<ToolExecution> toolExecuted;
         private Consumer<ChatResponse> completeResponse;
+        private Consumer<Throwable> errorHandler;
+
+        private ToolCallingTokenStream() {
+            this(
+                    "web_search",
+                    "{\"query\":\"latest news\"}",
+                    "0123456789abcdefghijklmnopqrstuvwxyz",
+                    null,
+                    false
+            );
+        }
+
+        private ToolCallingTokenStream(
+                String toolName,
+                String arguments,
+                String resultText
+        ) {
+            this(toolName, arguments, resultText, null, false);
+        }
+
+        private ToolCallingTokenStream(Throwable failure) {
+            this("", "", "", failure, false);
+        }
+
+        private ToolCallingTokenStream(
+                Throwable failure,
+                boolean throwSynchronously
+        ) {
+            this("", "", "", failure, throwSynchronously);
+        }
+
+        private ToolCallingTokenStream(
+                String toolName,
+                String arguments,
+                String resultText,
+                Throwable failure,
+                boolean throwSynchronously
+        ) {
+            this.toolName = toolName;
+            this.arguments = arguments;
+            this.resultText = resultText;
+            this.failure = failure;
+            this.throwSynchronously = throwSynchronously;
+        }
 
         @Override
         public TokenStream onPartialResponse(Consumer<String> handler) {
@@ -162,6 +511,7 @@ class LangChain4jAgentExecutorTest {
 
         @Override
         public TokenStream onError(Consumer<Throwable> handler) {
+            errorHandler = handler;
             return this;
         }
 
@@ -172,10 +522,20 @@ class LangChain4jAgentExecutorTest {
 
         @Override
         public void start() {
+            if (failure != null) {
+                if (throwSynchronously) {
+                    if (failure instanceof RuntimeException runtimeException) {
+                        throw runtimeException;
+                    }
+                    throw new RuntimeException(failure);
+                }
+                errorHandler.accept(failure);
+                return;
+            }
             ToolExecutionRequest request = ToolExecutionRequest.builder()
                     .id("tool-1")
-                    .name("web_search")
-                    .arguments("{\"query\":\"latest news\"}")
+                    .name(toolName)
+                    .arguments(arguments)
                     .build();
             InvocationContext invocationContext = mock(InvocationContext.class);
             beforeToolExecution.accept(BeforeToolExecution.builder()
@@ -185,7 +545,7 @@ class LangChain4jAgentExecutorTest {
 
             LocalDateTime now = LocalDateTime.now();
             ToolExecutionResult result = ToolExecutionResult.builder()
-                    .resultText("0123456789abcdefghijklmnopqrstuvwxyz")
+                    .resultText(resultText)
                     .isError(false)
                     .build();
             toolExecuted.accept(ToolExecution.builder()

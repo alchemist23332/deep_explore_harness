@@ -6,6 +6,7 @@ LangChain4j，前端使用 React、TypeScript、assistant-ui 和 Streamdown。
 当前能力：
 
 - 基于 HTTP SSE 的流式回答，以及随时停止和重新生成。
+- 独立持久化 Run、断线事件回放、多观察者订阅和显式取消。
 - `FAST` / `DEEP` 双模式与独立模型配置。
 - 流式 Markdown、GFM 表格、代码高亮和代码复制。
 - PostgreSQL 完整会话持久化、自动标题、搜索、重命名和删除。
@@ -13,7 +14,8 @@ LangChain4j，前端使用 React、TypeScript、assistant-ui 和 Streamdown。
 - 可选 Tavily `web_search` 与 LangChain4j ReAct 工具循环。
 - Harness Run/Event/Checkpoint 持久化与强类型执行事件。
 - Agent Executor Registry，支持按 `agentId` 扩展不同 Agent 实现。
-- PostgreSQL 会话生成锁、服务重启恢复与浏览器旧历史自动迁移。
+- PostgreSQL owner-scoped 会话租约、服务重启恢复与浏览器旧历史自动迁移。
+- LOCAL/JWT 双安全模式与 tenant/owner scoped 资源查询。
 - 响应式桌面工作台、移动端会话抽屉和明暗主题。
 
 ## 项目结构
@@ -150,6 +152,20 @@ set +a
 
 不要把 `.env` 或 API Key 提交到 Git。
 
+### 安全模式
+
+本地开发默认使用显式 `LOCAL` 模式。生产环境应启用 JWT：
+
+```dotenv
+SECURITY_MODE=JWT
+SECURITY_TENANT_ID=tenant-a
+SECURITY_OWNER_ID=expected-jwt-subject
+SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=https://issuer.example.com
+```
+
+JWT subject 必须与 `SECURITY_OWNER_ID` 一致。Conversation 和 Workspace
+仓储查询同时使用 tenant/owner 条件；CORS 不是认证机制。
+
 ## 启动 PostgreSQL
 
 使用仓库内的 Compose 配置：
@@ -200,7 +216,8 @@ npm run dev
 
 完整会话历史存放在 PostgreSQL 的 `conversations` 和 `messages` 表中；
 发送给模型的有界工作记忆由 LangChain4j `ChatMemory` 管理，并持久化到
-`conversation_memory`。主题仍存放在 Local Storage 中。
+`conversation_memory`。失败或取消后会标记工作记忆为 dirty，下一轮从完整
+会话历史重建。主题仍存放在 Local Storage 中。
 
 升级后的首次加载会把旧版 IndexedDB 会话导入 PostgreSQL。导入成功前不会
 删除浏览器原数据，导入标记保存在 Local Storage 中。
@@ -221,7 +238,14 @@ npm run lint
 
 ## API
 
-`POST /api/chat/stream` 接收：
+前端默认使用独立 Run API：
+
+- `POST /api/runs`：创建后台 Run，返回 `202` 和 `runId`
+- `GET /api/runs/{runId}`：查询 Run 状态
+- `GET /api/runs/{runId}/events?afterSequence=N`：回放并订阅 SSE
+- `POST /api/runs/{runId}/cancel`：显式取消
+
+`POST /api/chat/stream` 继续作为兼容接口。请求接收：
 
 ```json
 {
@@ -233,6 +257,9 @@ npm run lint
   "assistantMessageId": "待生成的助手消息 ID"
 }
 ```
+
+请求还可传 `agentId` 和 `profileId`。未传时使用服务端默认 Agent 与
+`FAST`/`DEEP` 兼容模式。
 
 会话管理接口：
 

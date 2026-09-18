@@ -1,6 +1,9 @@
 package com.alchemist.deepexplore.architecture;
 
+import static com.tngtech.archunit.base.DescribedPredicate.alwaysTrue;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -63,7 +66,66 @@ class ModuleArchitectureTest {
     @ArchTest
     static final ArchRule agent_does_not_depend_on_conversation =
             noClasses().that().resideInAPackage("..agent..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "..conversation..",
+                            "..coding..",
+                            "..workspace.."
+                    );
+
+    @ArchTest
+    static final ArchRule feature_modules_are_free_of_cycles =
+            slices().matching("com.alchemist.deepexplore.(*)..")
+                    .should().beFreeOfCycles()
+                    .ignoreDependency(
+                            resideInAnyPackage("..config..", "..api.."),
+                            alwaysTrue()
+                    )
+                    .ignoreDependency(
+                            alwaysTrue(),
+                            resideInAnyPackage("..config..", "..api..")
+                    );
+
+    @ArchTest
+    static final ArchRule workspace_application_has_no_filesystem_details =
+            noClasses().that().resideInAPackage("..workspace.application..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "java.nio..",
+                            "java.util.zip..",
+                            "org.apache.commons.compress.."
+                    );
+
+    @ArchTest
+    static final ArchRule workspace_is_independent_of_other_features =
+            noClasses().that().resideInAPackage("..workspace..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "..agent..",
+                            "..coding..",
+                            "..conversation..",
+                            "..harness..",
+                            "..runtime.."
+                    );
+
+    @ArchTest
+    static final ArchRule harness_does_not_depend_on_runtime_or_workspace =
+            noClasses().that().resideInAPackage("..harness..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "..runtime..",
+                            "..workspace..",
+                            "..coding.."
+                    );
+
+    @ArchTest
+    static final ArchRule coding_application_does_not_depend_on_adapters =
+            noClasses().that().resideInAPackage("..coding.application..")
                     .should().dependOnClassesThat().resideInAPackage(
-                            "..conversation.."
+                            "..adapter.."
+                    );
+
+    @ArchTest
+    static final ArchRule ports_do_not_depend_on_application_or_adapters =
+            noClasses().that().resideInAPackage("..port..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "..application..",
+                            "..adapter.."
                     );
 }

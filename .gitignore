@@ -7,10 +7,18 @@
 # Local configuration
 .env
 .env.local
-!.env.example
+.env.*
+.env.example
 .ollama-runtime/
 .deep-explore-data/
 .rt/
+
+# Local agent memory and temporary artifacts
+.workbuddy/
+.tmp-*
+*.class
+.build_md.py
+.gen_html.py
 
 # Java
 **/target/

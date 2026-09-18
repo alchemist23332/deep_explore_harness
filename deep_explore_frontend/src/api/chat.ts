@@ -41,6 +41,16 @@ export interface ChatRequest {
   userParentMessageId: string | null
   assistantMessageId: string | null
   searchProvider: SearchProvider
+  workspaceId: string | null
+  agentId?: string | null
+  profileId?: string | null
+}
+
+interface RunStartResponse {
+  runId: string
+  conversationId: string
+  assistantMessageId: string
+  status: string
 }
 
 export interface RuntimeConfig {
@@ -50,6 +60,12 @@ export interface RuntimeConfig {
   webSearchEnabled: boolean
   defaultSearchProvider: SearchProvider
   availableSearchProviders: SearchProvider[]
+  availableAgents: string[]
+  profiles: Array<{
+    id: string
+    displayName: string
+    model: string
+  }>
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -58,16 +74,47 @@ export async function* streamChatEvents(
   request: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
-  const response = await fetch(`${apiBaseUrl}/api/chat/stream`, {
+  const started = await startRun(request, signal)
+  try {
+    yield* readEventStream(
+      `${apiBaseUrl}/api/runs/${started.runId}/events`,
+      signal,
+    )
+  } catch (error) {
+    if (signal?.aborted) {
+      await cancelRun(started.runId)
+    }
+    throw error
+  }
+}
+
+async function startRun(
+  request: ChatRequest,
+  signal?: AbortSignal,
+): Promise<RunStartResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/runs`, {
     method: 'POST',
     headers: {
-      Accept: 'text/event-stream',
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(request),
     signal,
   })
 
+  if (!response.ok) {
+    throw new Error(await toRequestError(response))
+  }
+  return response.json() as Promise<RunStartResponse>
+}
+
+async function* readEventStream(
+  url: string,
+  signal?: AbortSignal,
+): AsyncGenerator<ChatEvent> {
+  const response = await fetch(url, {
+    headers: { Accept: 'text/event-stream' },
+    signal,
+  })
   if (!response.ok) {
     throw new Error(await toRequestError(response))
   }
@@ -102,6 +149,12 @@ export async function* streamChatEvents(
       break
     }
   }
+}
+
+async function cancelRun(runId: string): Promise<void> {
+  await fetch(`${apiBaseUrl}/api/runs/${runId}/cancel`, {
+    method: 'POST',
+  })
 }
 
 export async function getRuntimeConfig(): Promise<RuntimeConfig> {

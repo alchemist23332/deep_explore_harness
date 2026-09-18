@@ -1,6 +1,7 @@
 package com.alchemist.deepexplore.workspace.adapter.in.web;
 
 import com.alchemist.deepexplore.workspace.domain.RuntimeProfile;
+import com.alchemist.deepexplore.workspace.domain.StarterTemplate;
 import com.alchemist.deepexplore.workspace.domain.Workspace;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceEntry;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceStatus;
@@ -16,13 +17,15 @@ final class WorkspaceWebModels {
 
     record CreateRequest(
             @Size(max = 80) String name,
-            RuntimeProfile runtimeProfile
+            RuntimeProfile runtimeProfile,
+            StarterTemplate starterTemplate
     ) {
     }
 
     record WriteFileRequest(
             @NotBlank String path,
-            @NotNull String content
+            @NotNull String content,
+            String expectedRevision
     ) {
     }
 
@@ -42,6 +45,13 @@ final class WorkspaceWebModels {
     record CommandRequest(
             @NotBlank @Size(max = 8_000) String command,
             String workingDirectory
+    ) {
+    }
+
+    record PreviewStartRequest(
+            @NotBlank @Size(max = 8_000) String command,
+            String workingDirectory,
+            @Size(max = 500) String healthPath
     ) {
     }
 

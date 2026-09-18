@@ -1,6 +1,6 @@
 package com.alchemist.deepexplore.workspace.adapter.out.docker;
 
-import com.alchemist.deepexplore.workspace.application.WorkspaceProperties;
+import com.alchemist.deepexplore.workspace.config.WorkspaceProperties;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientConfig;

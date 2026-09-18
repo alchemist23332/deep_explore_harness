@@ -11,6 +11,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class PostgresRunEventStore implements RunEventStore {
@@ -24,7 +25,29 @@ public class PostgresRunEventStore implements RunEventStore {
     }
 
     @Override
-    public void append(RunEventEnvelope envelope) {
+    @Transactional
+    public RunEventEnvelope append(RunEventEnvelope envelope) {
+        Long sequence = jdbcTemplate.queryForObject("""
+                UPDATE agent_runs
+                SET last_event_sequence = last_event_sequence + 1
+                WHERE id = ?
+                RETURNING last_event_sequence
+                """, Long.class, envelope.runId());
+        if (sequence == null) {
+            throw new IllegalStateException(
+                    "Unable to allocate event sequence for run "
+                            + envelope.runId()
+            );
+        }
+        RunEventEnvelope persisted = new RunEventEnvelope(
+                envelope.eventId(),
+                envelope.runId(),
+                envelope.conversationId(),
+                envelope.agentId(),
+                sequence,
+                envelope.occurredAt(),
+                envelope.event()
+        );
         jdbcTemplate.update("""
                 INSERT INTO agent_run_events (
                     event_id, run_id, sequence_no, event_type,
@@ -32,13 +55,14 @@ public class PostgresRunEventStore implements RunEventStore {
                 )
                 VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?)
                 """,
-                envelope.eventId(),
-                envelope.runId(),
-                envelope.sequence(),
-                envelope.event().type(),
-                toJson(envelope.event()),
-                envelope.occurredAt().atOffset(java.time.ZoneOffset.UTC)
+                persisted.eventId(),
+                persisted.runId(),
+                persisted.sequence(),
+                persisted.event().type(),
+                toJson(persisted.event()),
+                persisted.occurredAt().atOffset(java.time.ZoneOffset.UTC)
         );
+        return persisted;
     }
 
     @Override
@@ -56,6 +80,22 @@ public class PostgresRunEventStore implements RunEventStore {
                 (resultSet, rowNum) -> mapEvent(resultSet),
                 runId,
                 afterSequence
+        );
+    }
+
+    @Override
+    public List<RunEventEnvelope> listByConversation(String conversationId) {
+        return jdbcTemplate.query("""
+                        SELECT event_id, run_id, sequence_no, event_type,
+                               payload_json::text, occurred_at,
+                               r.conversation_id, r.agent_id
+                        FROM agent_run_events e
+                        JOIN agent_runs r ON r.id = e.run_id
+                        WHERE r.conversation_id = ?
+                        ORDER BY r.created_at, e.sequence_no
+                        """,
+                (resultSet, rowNum) -> mapEvent(resultSet),
+                conversationId
         );
     }
 

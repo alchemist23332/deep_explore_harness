@@ -18,5 +18,12 @@ public interface AgentExecutor {
 
     void restore(String conversationId, AgentStateSnapshot snapshot);
 
-    void release(String conversationId);
+    void invalidate(String conversationId);
+
+    void markMemorySynchronized(
+            String conversationId,
+            String sourceHeadMessageId
+    );
+
+    void release(String conversationId, String runId);
 }

@@ -9,18 +9,21 @@ public class WebSearchRoutingContext {
     private final ConcurrentMap<String, WebSearchProvider> taskProviders =
             new ConcurrentHashMap<>();
 
-    public void bind(String conversationId, WebSearchProvider provider) {
-        taskProviders.put(conversationId, provider);
+    public void bind(
+            String invocationId,
+            WebSearchProvider provider
+    ) {
+        taskProviders.put(invocationId, provider);
     }
 
     public WebSearchProvider providerFor(
-            String conversationId,
+            String invocationId,
             WebSearchProvider defaultProvider
     ) {
-        return taskProviders.getOrDefault(conversationId, defaultProvider);
+        return taskProviders.getOrDefault(invocationId, defaultProvider);
     }
 
-    public void clear(String conversationId) {
-        taskProviders.remove(conversationId);
+    public void clear(String invocationId) {
+        taskProviders.remove(invocationId);
     }
 }

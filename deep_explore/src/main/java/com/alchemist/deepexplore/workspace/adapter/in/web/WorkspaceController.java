@@ -1,13 +1,19 @@
 package com.alchemist.deepexplore.workspace.adapter.in.web;
 
-import com.alchemist.deepexplore.workspace.application.WorkspaceApplicationService;
 import com.alchemist.deepexplore.workspace.application.WorkspaceChangeService;
 import com.alchemist.deepexplore.workspace.application.WorkspaceFileService;
+import com.alchemist.deepexplore.workspace.application.command.WorkspaceCommandService;
+import com.alchemist.deepexplore.workspace.application.lifecycle.WorkspaceLifecycleService;
+import com.alchemist.deepexplore.workspace.application.query.RuntimeProfileQueryService;
+import com.alchemist.deepexplore.workspace.application.query.WorkspaceQueryService;
+import com.alchemist.deepexplore.workspace.application.preview.PreviewApplicationService;
+import com.alchemist.deepexplore.workspace.application.preview.PreviewView;
 import com.alchemist.deepexplore.workspace.domain.CommandResult;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceChange;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceEntry;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceFile;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceTreeNode;
+import com.alchemist.deepexplore.support.BlockingExecution;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -31,29 +37,43 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api")
 public class WorkspaceController {
 
-    private final WorkspaceApplicationService workspaces;
+    private final WorkspaceQueryService workspaces;
+    private final WorkspaceLifecycleService lifecycle;
+    private final WorkspaceCommandService commands;
+    private final RuntimeProfileQueryService runtimeProfiles;
     private final WorkspaceFileService files;
     private final WorkspaceChangeService changes;
+    private final PreviewApplicationService previews;
+    private final BlockingExecution blocking;
 
     public WorkspaceController(
-            WorkspaceApplicationService workspaces,
+            WorkspaceQueryService workspaces,
+            WorkspaceLifecycleService lifecycle,
+            WorkspaceCommandService commands,
+            RuntimeProfileQueryService runtimeProfiles,
             WorkspaceFileService files,
-            WorkspaceChangeService changes
+            WorkspaceChangeService changes,
+            PreviewApplicationService previews,
+            BlockingExecution blocking
     ) {
         this.workspaces = workspaces;
+        this.lifecycle = lifecycle;
+        this.commands = commands;
+        this.runtimeProfiles = runtimeProfiles;
         this.files = files;
         this.changes = changes;
+        this.previews = previews;
+        this.blocking = blocking;
     }
 
     @GetMapping("/runtime-profiles")
-    public Mono<WorkspaceApplicationService.RuntimeOverview> runtimeProfiles() {
-        return blocking(workspaces::runtimeOverview);
+    public Mono<RuntimeProfileQueryService.RuntimeOverview> runtimeProfiles() {
+        return blocking(runtimeProfiles::overview);
     }
 
     @GetMapping("/workspaces")
@@ -69,7 +89,11 @@ public class WorkspaceController {
             @Valid @RequestBody WorkspaceWebModels.CreateRequest request
     ) {
         return blocking(() -> WorkspaceWebModels.Response.from(
-                workspaces.create(request.name(), request.runtimeProfile())
+                lifecycle.create(
+                        request.name(),
+                        request.runtimeProfile(),
+                        request.starterTemplate()
+                )
         ));
     }
 
@@ -87,7 +111,7 @@ public class WorkspaceController {
             @PathVariable String workspaceId
     ) {
         return blocking(() -> WorkspaceWebModels.Response.from(
-                workspaces.start(workspaceId)
+                lifecycle.start(workspaceId)
         ));
     }
 
@@ -96,7 +120,7 @@ public class WorkspaceController {
             @PathVariable String workspaceId
     ) {
         return blocking(() -> WorkspaceWebModels.Response.from(
-                workspaces.stop(workspaceId)
+                lifecycle.stop(workspaceId)
         ));
     }
 
@@ -104,7 +128,7 @@ public class WorkspaceController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public Mono<Void> delete(@PathVariable String workspaceId) {
         return blocking(() -> {
-            workspaces.delete(workspaceId);
+            lifecycle.delete(workspaceId);
             return (Void) null;
         });
     }
@@ -213,7 +237,8 @@ public class WorkspaceController {
             return files.write(
                     workspaceId,
                     request.path(),
-                    request.content()
+                    request.content(),
+                    request.expectedRevision()
             );
         });
     }
@@ -268,32 +293,69 @@ public class WorkspaceController {
             @PathVariable String workspaceId,
             @Valid @RequestBody WorkspaceWebModels.CommandRequest request
     ) {
-        return blocking(() -> workspaces.execute(
+        return blocking(() -> commands.execute(
                 workspaceId,
                 request.command(),
                 request.workingDirectory()
         ));
     }
 
-    private static <T> Mono<T> withTemporaryUpload(
+    @PostMapping("/workspaces/{workspaceId}/preview/start")
+    public Mono<PreviewView> startPreview(
+            @PathVariable String workspaceId,
+            @Valid @RequestBody
+            WorkspaceWebModels.PreviewStartRequest request
+    ) {
+        return blocking(() -> previews.start(
+                workspaceId,
+                request.command(),
+                request.workingDirectory(),
+                request.healthPath()
+        ));
+    }
+
+    @GetMapping("/workspaces/{workspaceId}/preview")
+    public Mono<PreviewView> preview(
+            @PathVariable String workspaceId
+    ) {
+        return blocking(() -> previews.status(workspaceId));
+    }
+
+    @GetMapping("/workspaces/{workspaceId}/preview/logs")
+    public Mono<java.util.Map<String, String>> previewLogs(
+            @PathVariable String workspaceId
+    ) {
+        return blocking(() -> java.util.Map.of(
+                "logs",
+                previews.logs(workspaceId)
+        ));
+    }
+
+    @PostMapping("/workspaces/{workspaceId}/preview/stop")
+    public Mono<PreviewView> stopPreview(
+            @PathVariable String workspaceId
+    ) {
+        return blocking(() -> previews.stop(workspaceId));
+    }
+
+    private <T> Mono<T> withTemporaryUpload(
             FilePart file,
             ThrowingFunction<Path, T> action
     ) {
-        return Mono.fromCallable(
+        return blocking.mono(
+                        BlockingExecution.Kind.FILE,
                         () -> Files.createTempFile(
                                 "deep-explore-upload-",
                                 ".tmp"
                         )
                 )
-                .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(temporary -> file.transferTo(temporary)
                         .then(blocking(() -> action.apply(temporary)))
                         .doFinally(signal -> deleteQuietly(temporary)));
     }
 
-    private static <T> Mono<T> blocking(Callable<T> action) {
-        return Mono.fromCallable(action)
-                .subscribeOn(Schedulers.boundedElastic());
+    private <T> Mono<T> blocking(Callable<T> action) {
+        return blocking.mono(BlockingExecution.Kind.DOCKER, action);
     }
 
     private static void deleteQuietly(Path temporary) {

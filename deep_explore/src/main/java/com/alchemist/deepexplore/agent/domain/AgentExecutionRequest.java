@@ -6,13 +6,33 @@ public record AgentExecutionRequest(
         String agentId,
         String profileId,
         String message,
-        WebSearchProvider searchProvider
+        WebSearchProvider searchProvider,
+        String workspaceId
 ) {
 
     public AgentExecutionRequest {
         searchProvider = searchProvider == null
                 ? WebSearchProvider.TAVILY
                 : searchProvider;
+    }
+
+    public AgentExecutionRequest(
+            String runId,
+            String conversationId,
+            String agentId,
+            String profileId,
+            String message,
+            WebSearchProvider searchProvider
+    ) {
+        this(
+                runId,
+                conversationId,
+                agentId,
+                profileId,
+                message,
+                searchProvider,
+                null
+        );
     }
 
     public AgentExecutionRequest(
@@ -28,7 +48,8 @@ public record AgentExecutionRequest(
                 agentId,
                 profileId,
                 message,
-                WebSearchProvider.TAVILY
+                WebSearchProvider.TAVILY,
+                null
         );
     }
 }

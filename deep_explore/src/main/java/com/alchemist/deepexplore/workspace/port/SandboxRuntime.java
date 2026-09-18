@@ -2,7 +2,6 @@ package com.alchemist.deepexplore.workspace.port;
 
 import com.alchemist.deepexplore.workspace.domain.CommandResult;
 import com.alchemist.deepexplore.workspace.domain.Workspace;
-import java.nio.file.Path;
 
 public interface SandboxRuntime {
 
@@ -10,11 +9,11 @@ public interface SandboxRuntime {
 
     RuntimeState currentState(String containerId);
 
-    RuntimeInstance start(
-            Workspace workspace,
-            Path filesDirectory,
-            Path mavenCacheDirectory
-    );
+    RuntimeInstance start(Workspace workspace);
+
+    void pause(String containerId);
+
+    void resume(String containerId);
 
     void stop(String containerId);
 

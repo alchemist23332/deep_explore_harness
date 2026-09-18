@@ -24,6 +24,14 @@
         <docker-java.version>3.4.2</docker-java.version>
         <commons-compress.version>1.27.1</commons-compress.version>
         <archunit.version>1.4.1</archunit.version>
+        <!--
+            docker-java 3.4.2's npipe/unix transports register a custom
+            ConnectionSocketFactory. HttpClient 5.4+ bypasses socket factories
+            for plain connections and connects via TCP directly, which breaks
+            the Windows named pipe transport (connects to localhost:2375 and
+            fails). Pin to the last compatible 5.3.x line.
+        -->
+        <httpclient5.version>5.3.1</httpclient5.version>
     </properties>
 
     <dependencies>
@@ -34,6 +42,14 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

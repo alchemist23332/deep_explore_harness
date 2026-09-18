@@ -5,5 +5,9 @@ public enum RunStatus {
     COMPLETED,
     FAILED,
     CANCELLED,
-    WAITING_APPROVAL
+    WAITING_APPROVAL;
+
+    public boolean isTerminal() {
+        return this == COMPLETED || this == FAILED || this == CANCELLED;
+    }
 }

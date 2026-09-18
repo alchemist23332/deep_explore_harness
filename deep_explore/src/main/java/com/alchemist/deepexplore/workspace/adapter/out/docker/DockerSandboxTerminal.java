@@ -6,18 +6,34 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Frame;
 import java.io.IOException;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
+import java.io.InputStream;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 @Component
 public class DockerSandboxTerminal implements SandboxTerminal {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(DockerSandboxTerminal.class);
+
+    private static final List<String> TERMINAL_ENVIRONMENT = List.of(
+            "TERM=xterm-256color",
+            "COLORTERM=truecolor",
+            "HOME=/home/agent",
+            "PROMPT_DIRTRIM=4",
+            "PS1=\\[\\e[1;36m\\]\\w\\[\\e[0m\\] \\$ "
+    );
 
     private final DockerClient docker;
 
@@ -46,11 +62,7 @@ public class DockerSandboxTerminal implements SandboxTerminal {
                     .withAttachStderr(true)
                     .withTty(true)
                     .withWorkingDir(workingDirectory)
-                    .withEnv(List.of(
-                            "TERM=xterm-256color",
-                            "COLORTERM=truecolor",
-                            "HOME=/home/agent"
-                    ))
+                    .withEnv(TERMINAL_ENVIRONMENT)
                     .withCmd(
                             "/bin/bash",
                             "--noprofile",
@@ -65,7 +77,12 @@ public class DockerSandboxTerminal implements SandboxTerminal {
             );
             session.start(columns, rows);
             return session;
-        } catch (IOException | RuntimeException error) {
+        } catch (RuntimeException error) {
+            log.warn(
+                    "Unable to open sandbox terminal for workspace {}",
+                    workspaceId,
+                    error
+            );
             throw new WorkspaceOperationException(
                     "TERMINAL_OPEN_FAILED",
                     "Unable to open sandbox terminal",
@@ -79,21 +96,20 @@ public class DockerSandboxTerminal implements SandboxTerminal {
         private final String id = UUID.randomUUID().toString();
         private final String workspaceId;
         private final String execId;
-        private final PipedInputStream stdin;
-        private final PipedOutputStream input;
+        private final ByteQueueInputStream stdin = new ByteQueueInputStream();
         private final Sinks.Many<byte[]> output =
-                Sinks.many().unicast().onBackpressureBuffer();
+                Sinks.many().unicast().onBackpressureBuffer(
+                        new ArrayBlockingQueue<>(256)
+                );
         private final AtomicBoolean closed = new AtomicBoolean();
         private ResultCallback.Adapter<Frame> callback;
 
         private DockerTerminalSession(
                 String workspaceId,
                 String execId
-        ) throws IOException {
+        ) {
             this.workspaceId = workspaceId;
             this.execId = execId;
-            this.stdin = new PipedInputStream(64 * 1024);
-            this.input = new PipedOutputStream(stdin);
         }
 
         private void start(int columns, int rows) {
@@ -101,14 +117,22 @@ public class DockerSandboxTerminal implements SandboxTerminal {
                 @Override
                 public void onNext(Frame frame) {
                     byte[] payload = frame.getPayload();
-                    output.tryEmitNext(Arrays.copyOf(
+                    Sinks.EmitResult result = output.tryEmitNext(Arrays.copyOf(
                             payload,
                             payload.length
                     ));
+                    if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
+                        DockerTerminalSession.this.close();
+                    }
                 }
 
                 @Override
                 public void onError(Throwable throwable) {
+                    log.warn(
+                            "Sandbox terminal stream failed (workspace {})",
+                            workspaceId,
+                            throwable
+                    );
                     if (!closed.get()) {
                         output.tryEmitError(throwable);
                     }
@@ -142,9 +166,13 @@ public class DockerSandboxTerminal implements SandboxTerminal {
                 return;
             }
             try {
-                input.write(data);
-                input.flush();
+                stdin.write(data);
             } catch (IOException error) {
+                log.warn(
+                        "Sandbox terminal stdin write failed (workspace {})",
+                        workspaceId,
+                        error
+                );
                 close();
             }
         }
@@ -170,16 +198,7 @@ public class DockerSandboxTerminal implements SandboxTerminal {
             if (!closed.compareAndSet(false, true)) {
                 return;
             }
-            try {
-                input.close();
-            } catch (IOException ignored) {
-                // Continue closing the remaining terminal resources.
-            }
-            try {
-                stdin.close();
-            } catch (IOException ignored) {
-                // Continue closing the remaining terminal resources.
-            }
+            stdin.close();
             if (callback != null) {
                 try {
                     callback.close();
@@ -196,6 +215,79 @@ public class DockerSandboxTerminal implements SandboxTerminal {
                     workspaceId,
                     id
             );
+        }
+    }
+
+    /**
+     * Blocking stdin stream without {@link java.io.PipedInputStream}'s
+     * thread-affinity checks. Docker-java's hijacking transport reads the
+     * exec stdin on one long-lived thread while terminal input is written
+     * from a changing pool of scheduler threads; a {@code PipedInputStream}
+     * throws "Read/Write end dead" once its last writer thread is retired,
+     * which kills otherwise healthy sessions. This queue-based stream has
+     * no such coupling.
+     */
+    private static final class ByteQueueInputStream extends InputStream {
+
+        private final BlockingQueue<byte[]> queue = new LinkedBlockingQueue<>();
+        private byte[] current;
+        private int position;
+        private volatile boolean closed;
+
+        void write(byte[] data) throws IOException {
+            if (closed) {
+                throw new IOException("stream closed");
+            }
+            if (data.length > 0) {
+                queue.add(data);
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (!fill()) {
+                return -1;
+            }
+            return current[position++] & 0xff;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length)
+                throws IOException {
+            if (!fill()) {
+                return -1;
+            }
+            int available = current.length - position;
+            int count = Math.min(available, length);
+            System.arraycopy(current, position, buffer, offset, count);
+            position += count;
+            return count;
+        }
+
+        private boolean fill() throws IOException {
+            while (current == null || position >= current.length) {
+                if (closed && queue.isEmpty()) {
+                    return false;
+                }
+                try {
+                    current = queue.poll(250, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted while waiting for "
+                            + "terminal input", error);
+                }
+                if (current != null) {
+                    position = 0;
+                } else if (closed) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
         }
     }
 }

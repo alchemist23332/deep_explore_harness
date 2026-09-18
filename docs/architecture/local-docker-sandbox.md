@@ -2,13 +2,13 @@
 
 ## Scope
 
-Phase one provides a browser-managed Java 21 workspace. It is intentionally
-independent from Conversation, Agent, and Harness. The browser can create a
-workspace, upload or edit files, start and stop its container, and execute
-commands manually.
+The local runtime provides a browser-managed Fullstack workspace with Java 21,
+Maven, Node.js 22, npm, pnpm, tmux, and ripgrep. The browser and Coding Agent
+can edit the same persistent files, execute bounded commands, and run one web
+preview per workspace.
 
-Agent tools, conversation binding, checkpoints, approvals, and cloud
-multi-tenancy are deferred.
+Cloud multi-tenancy, a public Preview Gateway, desktop GUI forwarding, and
+production deployment remain deferred.
 
 ## Ownership and Storage
 
@@ -18,24 +18,48 @@ multiple workspaces. Each workspace has:
 - PostgreSQL metadata in `workspaces`
 - persistent files under `.deep-explore-data/workspaces/{id}/files`
 - a persistent Maven cache under `.deep-explore-data/workspaces/{id}/cache/m2`
+- persistent npm and pnpm caches under the workspace cache directory
 - at most one disposable Docker container
 
 The container is compute state, not the source of truth. Stopping or replacing
 it does not remove workspace files.
 
-New Java 21 workspaces are initialized from the resource template under
-`workspace-templates/java21/`. The template contains a runnable Maven project
-with `pom.xml`, application and test sources, `README.md`, and `.gitignore`.
-Initialization is idempotent: an empty legacy workspace is backfilled when it
-is next loaded, while any workspace that already contains files is left
-untouched.
+The backend keeps the workspace as a module inside the modular monolith:
+
+```text
+workspace/
+  domain/                   Workspace and file value types
+  application/command/      Bounded command execution
+  application/lifecycle/    Create, start, stop, delete, operation locking
+  application/query/        Workspace and runtime-profile queries
+  application/preview/      Preview process lifecycle and readiness
+  application/terminal/     PTY session lifecycle
+  port/                     Storage, template, watcher, runtime interfaces
+  adapter/out/filesystem/   NIO files, ZIP import, templates, WatchService
+  adapter/out/docker/       Container, PTY, and tmux preview runtime
+  adapter/out/http/         Preview readiness probe
+  adapter/out/postgres/     Workspace metadata
+```
+
+Application services depend on ports and contain no NIO, ZIP, or
+`WatchService` implementation details. ArchUnit enforces that boundary.
+
+Workspace creation accepts `WEB_TYPESCRIPT`, `JAVA_MAVEN`, or `EMPTY`.
+`WEB_TYPESCRIPT` is the default and installs a minimal Vite project. Templates
+are installed only during creation; reading an intentionally emptied workspace
+never recreates deleted files.
 
 ## Runtime
 
 `sandbox/java21/Dockerfile` builds
-`deep-explore/sandbox-java21:v1`. The container runs as UID/GID 1000 with all
-Linux capabilities dropped, `no-new-privileges`, CPU, memory, and PID limits.
-Only the managed workspace and Maven cache directories are mounted.
+`deep-explore/sandbox-fullstack:v1`. The container runs as UID/GID 1000 with
+all Linux capabilities dropped, `no-new-privileges`, CPU, memory, and PID
+limits. The managed workspace plus Maven, npm, and pnpm caches are mounted.
+
+Container port `3000` is published on a random loopback-only host port. Preview
+servers must listen on `0.0.0.0:3000`. The runtime version label forces legacy
+containers to be recreated with the port binding while preserving their
+workspace files.
 
 The local MVP uses bridge networking so Maven and Gradle can download
 dependencies. This is not a public multi-tenant security boundary. A hosted
@@ -68,6 +92,10 @@ DELETE /api/workspaces/{id}/entries
 POST   /api/workspaces/{id}/upload
 POST   /api/workspaces/{id}/import/zip
 POST   /api/workspaces/{id}/commands
+POST   /api/workspaces/{id}/preview/start
+GET    /api/workspaces/{id}/preview
+GET    /api/workspaces/{id}/preview/logs
+POST   /api/workspaces/{id}/preview/stop
 GET    /api/workspaces/{id}/events       (SSE)
 WS     /api/workspaces/{id}/terminal
 ```
@@ -75,6 +103,12 @@ WS     /api/workspaces/{id}/terminal
 Workspace paths are normalized under the managed root. Absolute paths,
 traversal, and symbolic-link traversal are rejected. ZIP imports enforce
 compressed size, extracted size, and file-count limits.
+
+Text file responses include a SHA-256 `revision`. Conditional writes compare
+the supplied revision before replacing a file and return
+`WORKSPACE_FILE_CHANGED` on stale edits. The browser editor submits this
+revision when saving, preventing silent overwrites after an Agent or terminal
+changes the same file.
 
 ## Unified Workbench
 
@@ -105,7 +139,8 @@ supports nested expansion, creation, inline rename, recursive deletion,
 drag-and-drop moves, keyboard operations, persisted open state, and multiple
 editor tabs. A Java `WatchService` observes the persistent workspace directory
 recursively and publishes SSE events, so files created by terminal commands
-also refresh the Explorer.
+also refresh the Explorer. Watchers are reference-counted and close when the
+last SSE subscriber disconnects or the workspace is deleted.
 
 The user terminal uses `@xterm/xterm` over a WebSocket-backed Docker exec PTY.
 Input, ANSI output, terminal resize, and control keys travel through the
@@ -118,17 +153,37 @@ future Agent tools.
 `/workspaces/{id}` routes remain as compatibility redirects that open the
 sandbox in the unified workbench.
 
-## Future Harness Integration
+## Preview Runtime
 
-The existing services become the backing implementation for future tools:
+Long-running web servers do not use the bounded command endpoint. The Docker
+preview adapter writes a controlled script inside the container and runs it in
+the `deep-explore-preview` tmux session. Logs and the exit code remain under
+`/tmp/deep-explore-preview`; start waits for an HTTP response through the
+published host port before returning `RUNNING`.
+
+The frontend Preview tab polls status, embeds the URL in a sandboxed iframe,
+and provides reload, open, logs, and stop controls. This local URL is suitable
+only for the current machine. A hosted deployment requires an authenticated,
+expiring Preview Gateway instead of exposing Docker host ports directly.
+
+## Coding Agent Integration
+
+Runs with a `workspaceId` receive ten workspace-scoped tools:
 
 ```text
-WorkspaceFileService    -> list_files, read_file, apply_patch
-WorkspaceApplicationService.execute -> run_command, run_tests
-SandboxRuntime          -> workspace lifecycle
+WorkspaceStorage        -> list_files, read_file, write_file, edit_file
+WorkspaceCommandService -> grep_search, run_command
+PreviewApplication      -> start_preview, preview_status, preview_logs,
+                           stop_preview
 ```
 
-That integration should add workspace ownership to conversations and runs,
-workspace-level locking, asynchronous command events, diff/checkpoint storage,
-and approval policy. None of those concerns are embedded in the phase-one
-runtime API.
+Tool paths are always relative to `/workspace`; the host storage path is never
+part of the model contract. An empty `workingDirectory` means the workspace
+root; absolute paths are rejected. Mutations, commands, and preview lifecycle
+operations share the workspace operation lock. Finite commands remain bounded
+by the Docker runtime timeout and output limit; long-running preview commands
+are isolated in tmux. Full tool results are supplied to the model, while
+browser and database Run Events retain only sanitized summaries.
+
+Approval, resumable tool execution, change journals, rollback, and multi-agent
+workflow graphs remain deferred.
