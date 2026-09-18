@@ -2,6 +2,8 @@ package com.alchemist.deepexplore.agent.adapter.langchain4j;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchRoutingContext;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolBatchRegistry;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolSchedulingException;
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
 import com.alchemist.deepexplore.agent.application.ToolDescriptorRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
@@ -10,6 +12,7 @@ import com.alchemist.deepexplore.agent.domain.AgentPreparationRequest;
 import com.alchemist.deepexplore.agent.domain.AgentStateSnapshot;
 import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
 import com.alchemist.deepexplore.agent.spi.AgentExecutor;
+import com.alchemist.deepexplore.config.AgentLoopProperties;
 import com.alchemist.deepexplore.config.AiModelProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 
 @Component
 public class LangChain4jAgentExecutor implements AgentExecutor {
@@ -31,10 +35,12 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
             LoggerFactory.getLogger(LangChain4jAgentExecutor.class);
     private final String agentId;
     private final AgentProfileRuntimeRegistry profileRuntimes;
+    private final AgentLoopProperties loopProperties;
     private final AiModelProperties modelProperties;
     private final LangChain4jMemoryManager memoryManager;
     private final WebSearchRoutingContext webSearchRoutingContext;
     private final AgentInvocationContextRegistry invocationContexts;
+    private final ToolBatchRegistry toolBatches;
     private final ToolDescriptorRegistry toolDescriptors;
     private final ObjectMapper objectMapper;
     private final int maxEventResultCharacters;
@@ -42,10 +48,12 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     public LangChain4jAgentExecutor(
             @Value("${ai.agent.id:assistant}") String agentId,
             AgentProfileRuntimeRegistry profileRuntimes,
+            AgentLoopProperties loopProperties,
             AiModelProperties modelProperties,
             LangChain4jMemoryManager memoryManager,
             WebSearchRoutingContext webSearchRoutingContext,
             AgentInvocationContextRegistry invocationContexts,
+            ToolBatchRegistry toolBatches,
             ToolDescriptorRegistry toolDescriptors,
             ObjectMapper objectMapper,
             @Value("${tools.web-search.max-event-result-characters:16384}")
@@ -53,10 +61,12 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
     ) {
         this.agentId = agentId;
         this.profileRuntimes = profileRuntimes;
+        this.loopProperties = loopProperties;
         this.modelProperties = modelProperties;
         this.memoryManager = memoryManager;
         this.webSearchRoutingContext = webSearchRoutingContext;
         this.invocationContexts = invocationContexts;
+        this.toolBatches = toolBatches;
         this.toolDescriptors = toolDescriptors;
         this.objectMapper = objectMapper;
         this.maxEventResultCharacters = maxEventResultCharacters;
@@ -91,6 +101,7 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
             AtomicReference<StreamingHandle> handle = new AtomicReference<>();
             sink.onCancel(() -> {
                 if (active.compareAndSet(true, false)) {
+                    toolBatches.cancelRun(request.runId());
                     clearRequestContexts(request);
                     StreamingHandle streamingHandle = handle.get();
                     if (streamingHandle != null) {
@@ -161,6 +172,7 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                             if (!active.compareAndSet(true, false)) {
                                 return;
                             }
+                            toolBatches.cancelRun(request.runId());
                             clearRequestContexts(request);
                             sink.next(new AgentExecutionEvent.Completed(
                                     response.aiMessage().text(),
@@ -174,32 +186,27 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
                                 return;
                             }
                             clearRequestContexts(request);
-                            log.error(
-                                    "Model call failed for run {}",
-                                    request.runId(),
-                                    error
+                            emitFailure(
+                                    sink,
+                                    request,
+                                    error,
+                                    "MODEL_CALL_FAILED",
+                                    "模型调用失败，请检查模型地址、名称和 API Key"
                             );
-                            boolean toolRoundLimitExceeded =
-                                    isToolRoundLimitExceeded(error);
-                            sink.next(new AgentExecutionEvent.Failed(
-                                    toolRoundLimitExceeded
-                                            ? "TOOL_ROUND_LIMIT_EXCEEDED"
-                                            : "MODEL_CALL_FAILED",
-                                    toolRoundLimitExceeded
-                                            ? "Agent 工具调用轮次超过限制，请缩小任务范围或继续当前任务"
-                                            : "模型调用失败，请检查模型地址、名称和 API Key"
-                            ));
                             sink.complete();
                         })
                         .start();
             } catch (RuntimeException error) {
                 if (active.compareAndSet(true, false)) {
+                    toolBatches.cancelRun(request.runId());
                     clearRequestContexts(request);
-                    log.error("Unable to start model run {}", request.runId(), error);
-                    sink.next(new AgentExecutionEvent.Failed(
+                    emitFailure(
+                            sink,
+                            request,
+                            error,
                             "MODEL_START_FAILED",
                             "模型调用启动失败"
-                    ));
+                    );
                     sink.complete();
                 }
             }
@@ -360,5 +367,69 @@ public class LangChain4jAgentExecutor implements AgentExecutor {
             current = current.getCause();
         }
         return false;
+    }
+
+    private static ToolSchedulingException findToolSchedulingError(
+            Throwable error
+    ) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof ToolSchedulingException schedulingError) {
+                return schedulingError;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private void emitFailure(
+            FluxSink<AgentExecutionEvent> sink,
+            AgentExecutionRequest request,
+            Throwable error,
+            String fallbackCode,
+            String fallbackMessage
+    ) {
+        boolean toolRoundLimitExceeded = isToolRoundLimitExceeded(error);
+        ToolSchedulingException schedulingError =
+                findToolSchedulingError(error);
+        if (toolRoundLimitExceeded) {
+            log.warn(
+                    "Tool round limit reached for run {} with profile {} "
+                            + "(limit {})",
+                    request.runId(),
+                    request.profileId(),
+                    loopProperties.maxToolCallingRoundTrips(
+                            request.profileId()
+                    )
+            );
+        } else if (schedulingError != null) {
+            log.warn(
+                    "Tool scheduling failed for run {}: {} ({})",
+                    request.runId(),
+                    schedulingError.getMessage(),
+                    schedulingError.code()
+            );
+        } else {
+            log.error(
+                    "Model execution failed for run {}",
+                    request.runId(),
+                    error
+            );
+        }
+        sink.next(new AgentExecutionEvent.Failed(
+                toolRoundLimitExceeded
+                        ? "TOOL_ROUND_LIMIT_EXCEEDED"
+                        : schedulingError != null
+                                ? schedulingError.code()
+                                : fallbackCode,
+                toolRoundLimitExceeded
+                        ? "Agent 已达到本次任务的工具调用轮次上限。"
+                                + "已完成的读取和修改均已保留，"
+                                + "可以发送“继续”接着执行。"
+                        : schedulingError != null
+                                ? "工具批次调度失败："
+                                        + schedulingError.getMessage()
+                                : fallbackMessage
+        ));
     }
 }

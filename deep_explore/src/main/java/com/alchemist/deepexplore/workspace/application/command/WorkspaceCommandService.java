@@ -35,7 +35,7 @@ public class WorkspaceCommandService {
             String command,
             String relativeWorkingDirectory
     ) {
-        return operations.withLock(workspaceId, () -> {
+        return operations.withWriteLock(workspaceId, () -> {
             Workspace workspace = queries.get(workspaceId);
             if (workspace.status() != WorkspaceStatus.RUNNING) {
                 throw new WorkspaceOperationException(

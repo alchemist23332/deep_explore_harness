@@ -149,7 +149,7 @@ binding is removed on completion, failure, cancellation, and executor release.
 ## Coding Tools
 
 Coding runs expose `list_files`, `read_file`, `grep_search`, `write_file`,
-`apply_patch`, `run_command`, `start_preview`, `preview_status`,
+`edit_file`, `run_command`, `start_preview`, `preview_status`,
 `preview_logs`, and `stop_preview`. File operations use `WorkspaceStorage`;
 finite commands execute only through the Docker-backed
 `WorkspaceCommandService`. Preview commands run in a managed tmux session and

@@ -9,10 +9,10 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "tools.coding")
 public record CodingProperties(
         boolean enabled,
-        @Min(1) @Max(100) int maxToolCalls,
-        @Min(1) @Max(50) int maxMutationCalls,
-        @Min(1) @Max(20) int maxCommandCalls,
+        @Min(32) @Max(10_000) int emergencyMaxToolCalls,
         @Min(1_000) int maxReadCharacters,
+        @Min(1) @Max(256) int maxEditOperations,
+        @Min(1_000) int maxEditInputCharacters,
         @Min(1_000) int maxSearchCharacters,
         @Min(1) @Max(1_000) int maxSearchResults,
         @Min(1_000) int maxCommandResultCharacters

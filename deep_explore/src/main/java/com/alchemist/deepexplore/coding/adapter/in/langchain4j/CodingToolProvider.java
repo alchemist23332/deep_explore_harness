@@ -2,6 +2,8 @@ package com.alchemist.deepexplore.coding.adapter.in.langchain4j;
 
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.LangChainToolProvider;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolExecutionPolicy;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolResource;
 import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
 import com.alchemist.deepexplore.agent.spi.ToolDescriptorContributor;
 import dev.langchain4j.agent.tool.Tool;
@@ -28,6 +30,19 @@ import org.springframework.stereotype.Component;
 )
 public class CodingToolProvider
         implements LangChainToolProvider, ToolDescriptorContributor {
+
+    private static final Map<String, ToolExecutionPolicy> TOOL_POLICIES = Map.ofEntries(
+            Map.entry("list_files", ToolExecutionPolicy.readOnly(ToolResource.WORKSPACE)),
+            Map.entry("read_file", ToolExecutionPolicy.readOnly(ToolResource.WORKSPACE)),
+            Map.entry("grep_search", ToolExecutionPolicy.exclusive(ToolResource.WORKSPACE_RUNTIME)),
+            Map.entry("write_file", ToolExecutionPolicy.mutation(ToolResource.WORKSPACE)),
+            Map.entry("edit_file", ToolExecutionPolicy.mutation(ToolResource.WORKSPACE)),
+            Map.entry("run_command", ToolExecutionPolicy.exclusive(ToolResource.WORKSPACE_RUNTIME)),
+            Map.entry("start_preview", ToolExecutionPolicy.exclusive(ToolResource.WORKSPACE_RUNTIME)),
+            Map.entry("preview_status", ToolExecutionPolicy.readOnly(ToolResource.WORKSPACE_RUNTIME)),
+            Map.entry("preview_logs", ToolExecutionPolicy.readOnly(ToolResource.WORKSPACE_RUNTIME)),
+            Map.entry("stop_preview", ToolExecutionPolicy.exclusive(ToolResource.WORKSPACE_RUNTIME))
+    );
 
     private final AgentInvocationContextRegistry contexts;
     private final List<AiServiceTool> tools;
@@ -68,13 +83,20 @@ public class CodingToolProvider
     }
 
     @Override
+    public Map<String, ToolExecutionPolicy> toolPolicies() {
+        return TOOL_POLICIES;
+    }
+
+    @Override
     public List<ToolDescriptor> toolDescriptors() {
         return List.of(
                 descriptor("list_files", "浏览文件"),
                 descriptor("read_file", "读取文件"),
                 descriptor("grep_search", "搜索代码"),
                 descriptor("write_file", "写入文件"),
-                descriptor("apply_patch", "应用补丁"),
+                descriptor("edit_file", "编辑文件"),
+                // Keep historical events readable after removing the tool.
+                descriptor("apply_patch", "应用补丁（已废弃）"),
                 descriptor("run_command", "运行命令"),
                 descriptor("start_preview", "启动预览"),
                 descriptor("preview_status", "检查预览"),

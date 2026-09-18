@@ -23,12 +23,18 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 final class LocalWorkspaceStorage implements WorkspaceStorage {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(LocalWorkspaceStorage.class);
 
     private static final int MAX_TREE_DEPTH = 64;
     private static final int MAX_TREE_ENTRIES = 20_000;
@@ -66,7 +72,8 @@ final class LocalWorkspaceStorage implements WorkspaceStorage {
         try (var entries = Files.list(directory)) {
             return entries
                     .filter(entry -> !Files.isSymbolicLink(entry))
-                    .map(entry -> toEntry(workspaceId, entry))
+                    .map(entry -> tryToEntry(workspaceId, entry))
+                    .filter(Objects::nonNull)
                     .sorted(Comparator
                             .<WorkspaceEntry>comparingInt(entry ->
                                     entry.type()
@@ -386,6 +393,26 @@ final class LocalWorkspaceStorage implements WorkspaceStorage {
         }
     }
 
+    /**
+     * Entries created inside the sandbox container (for example the
+     * {@code node_modules/.bin} symlinks npm installs) can surface on a
+     * Windows host as reparse points that are neither reported as symbolic
+     * links by {@link Files#isSymbolicLink} nor stat-able by the NIO API.
+     * They are skipped instead of failing the entire listing or tree.
+     */
+    private WorkspaceEntry tryToEntry(String workspaceId, Path entry) {
+        try {
+            return toEntry(workspaceId, entry);
+        } catch (WorkspaceOperationException error) {
+            log.debug(
+                    "Skipping unstattable workspace entry {}",
+                    entry,
+                    error
+            );
+            return null;
+        }
+    }
+
     private List<WorkspaceTreeNode> treeChildren(
             String workspaceId,
             Path directory,
@@ -408,7 +435,10 @@ final class LocalWorkspaceStorage implements WorkspaceStorage {
                                     "Workspace tree contains too many entries"
                             );
                         }
-                        WorkspaceEntry value = toEntry(workspaceId, entry);
+                        WorkspaceEntry value = tryToEntry(workspaceId, entry);
+                        if (value == null) {
+                            return null;
+                        }
                         List<WorkspaceTreeNode> children =
                                 value.type() == WorkspaceEntry.Type.DIRECTORY
                                         ? treeChildren(
@@ -420,6 +450,7 @@ final class LocalWorkspaceStorage implements WorkspaceStorage {
                                         : null;
                         return new WorkspaceTreeNode(value, children);
                     })
+                    .filter(Objects::nonNull)
                     .sorted(Comparator
                             .comparingInt((WorkspaceTreeNode node) ->
                                     node.entry().type()

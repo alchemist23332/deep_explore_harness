@@ -86,7 +86,7 @@ public class WorkspaceLifecycleService {
     }
 
     public Workspace start(String workspaceId) {
-        return operations.withLock(workspaceId, () -> {
+        return operations.withWriteLock(workspaceId, () -> {
             Workspace workspace = queries.get(workspaceId);
             store.updateRuntime(
                     workspace.id(),
@@ -118,7 +118,7 @@ public class WorkspaceLifecycleService {
     }
 
     public Workspace stop(String workspaceId) {
-        return operations.withLock(workspaceId, () -> {
+        return operations.withWriteLock(workspaceId, () -> {
             Workspace workspace = queries.get(workspaceId);
             store.updateRuntime(
                     workspace.id(),
@@ -150,7 +150,7 @@ public class WorkspaceLifecycleService {
     }
 
     public void delete(String workspaceId) {
-        operations.withLock(workspaceId, () -> {
+        operations.withWriteLock(workspaceId, () -> {
             Workspace workspace = queries.get(workspaceId);
             terminalSessions.closeWorkspace(workspace.id());
             previews.stop(workspace.containerId());

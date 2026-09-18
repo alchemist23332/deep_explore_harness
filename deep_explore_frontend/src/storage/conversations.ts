@@ -27,6 +27,8 @@ const messageConversationIds = new Map<string, string>()
 let pendingInitializedConversationId: string | null = null
 const projectWorkspaceTools = new Set([
   'write_file',
+  'edit_file',
+  // Keep legacy runs associated with their project workspace.
   'apply_patch',
   'start_preview',
 ])

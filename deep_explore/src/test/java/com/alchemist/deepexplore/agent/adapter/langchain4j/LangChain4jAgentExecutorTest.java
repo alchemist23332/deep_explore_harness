@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMemoryManager;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.WebSearchRoutingContext;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolBatchRegistry;
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
 import com.alchemist.deepexplore.agent.application.ToolDescriptorRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentExecutionEvent;
@@ -14,6 +15,7 @@ import com.alchemist.deepexplore.agent.domain.AgentExecutionRequest;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.WebSearchProvider;
 import com.alchemist.deepexplore.agent.domain.ToolDescriptor;
+import com.alchemist.deepexplore.config.AgentLoopProperties;
 import com.alchemist.deepexplore.config.AiModelProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -56,10 +58,12 @@ class LangChain4jAgentExecutorTest {
         LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
                 "assistant",
                 runtimes(fastAssistant, deepAssistant),
+                loopProperties(),
                 properties(),
                 mock(LangChain4jMemoryManager.class),
                 routingContext,
                 invocationContexts,
+                mock(ToolBatchRegistry.class),
                 toolDescriptors(),
                 new ObjectMapper(),
                 12
@@ -114,10 +118,12 @@ class LangChain4jAgentExecutorTest {
         LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
                 "assistant",
                 runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
                 properties(),
                 mock(LangChain4jMemoryManager.class),
                 mock(WebSearchRoutingContext.class),
                 mock(AgentInvocationContextRegistry.class),
+                mock(ToolBatchRegistry.class),
                 toolDescriptors(),
                 new ObjectMapper(),
                 1_000
@@ -156,10 +162,12 @@ class LangChain4jAgentExecutorTest {
         LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
                 "assistant",
                 runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
                 properties(),
                 mock(LangChain4jMemoryManager.class),
                 mock(WebSearchRoutingContext.class),
                 invocationContexts,
+                mock(ToolBatchRegistry.class),
                 toolDescriptors(),
                 new ObjectMapper(),
                 1_000
@@ -207,10 +215,12 @@ class LangChain4jAgentExecutorTest {
         LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
                 "assistant",
                 runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
                 properties(),
                 mock(LangChain4jMemoryManager.class),
                 mock(WebSearchRoutingContext.class),
                 invocationContexts,
+                mock(ToolBatchRegistry.class),
                 toolDescriptors(),
                 new ObjectMapper(),
                 1_000
@@ -235,6 +245,46 @@ class LangChain4jAgentExecutorTest {
         verify(invocationContexts).clear("run-1");
     }
 
+    @Test
+    void reportsSynchronouslyThrownToolRoundLimitSeparately() {
+        RuntimeException roundLimit = new RuntimeException(
+                "Exceeded tool rounds (maxToolCallingRoundTrips)"
+        );
+        StreamingAssistant fastAssistant = mock(StreamingAssistant.class);
+        when(fastAssistant.chat("run-1", "large coding task"))
+                .thenReturn(new ToolCallingTokenStream(roundLimit, true));
+        AgentInvocationContextRegistry invocationContexts =
+                mock(AgentInvocationContextRegistry.class);
+        LangChain4jAgentExecutor executor = new LangChain4jAgentExecutor(
+                "assistant",
+                runtimes(fastAssistant, mock(StreamingAssistant.class)),
+                loopProperties(),
+                properties(),
+                mock(LangChain4jMemoryManager.class),
+                mock(WebSearchRoutingContext.class),
+                invocationContexts,
+                mock(ToolBatchRegistry.class),
+                toolDescriptors(),
+                new ObjectMapper(),
+                1_000
+        );
+
+        StepVerifier.create(executor.execute(new AgentExecutionRequest(
+                        "run-1",
+                        "conversation-1",
+                        "assistant",
+                        AgentProfile.FAST.id(),
+                        "large coding task",
+                        WebSearchProvider.TAVILY,
+                        "workspace-1"
+                )))
+                .assertNext(event -> assertThat(
+                        ((AgentExecutionEvent.Failed) event).code()
+                ).isEqualTo("TOOL_ROUND_LIMIT_EXCEEDED"))
+                .verifyComplete();
+        verify(invocationContexts).clear("run-1");
+    }
+
     private static AiModelProperties properties() {
         return new AiModelProperties(
                 "DEEPSEEK",
@@ -253,6 +303,10 @@ class LangChain4jAgentExecutorTest {
                 false,
                 false
         );
+    }
+
+    private static AgentLoopProperties loopProperties() {
+        return new AgentLoopProperties(24, 64);
     }
 
     private static AgentProfileRuntimeRegistry runtimes(
@@ -362,6 +416,7 @@ class LangChain4jAgentExecutorTest {
         private final String arguments;
         private final String resultText;
         private final Throwable failure;
+        private final boolean throwSynchronously;
         private Consumer<BeforeToolExecution> beforeToolExecution;
         private Consumer<ToolExecution> toolExecuted;
         private Consumer<ChatResponse> completeResponse;
@@ -372,7 +427,8 @@ class LangChain4jAgentExecutorTest {
                     "web_search",
                     "{\"query\":\"latest news\"}",
                     "0123456789abcdefghijklmnopqrstuvwxyz",
-                    null
+                    null,
+                    false
             );
         }
 
@@ -381,23 +437,32 @@ class LangChain4jAgentExecutorTest {
                 String arguments,
                 String resultText
         ) {
-            this(toolName, arguments, resultText, null);
+            this(toolName, arguments, resultText, null, false);
         }
 
         private ToolCallingTokenStream(Throwable failure) {
-            this("", "", "", failure);
+            this("", "", "", failure, false);
+        }
+
+        private ToolCallingTokenStream(
+                Throwable failure,
+                boolean throwSynchronously
+        ) {
+            this("", "", "", failure, throwSynchronously);
         }
 
         private ToolCallingTokenStream(
                 String toolName,
                 String arguments,
                 String resultText,
-                Throwable failure
+                Throwable failure,
+                boolean throwSynchronously
         ) {
             this.toolName = toolName;
             this.arguments = arguments;
             this.resultText = resultText;
             this.failure = failure;
+            this.throwSynchronously = throwSynchronously;
         }
 
         @Override
@@ -458,6 +523,12 @@ class LangChain4jAgentExecutorTest {
         @Override
         public void start() {
             if (failure != null) {
+                if (throwSynchronously) {
+                    if (failure instanceof RuntimeException runtimeException) {
+                        throw runtimeException;
+                    }
+                    throw new RuntimeException(failure);
+                }
                 errorHandler.accept(failure);
                 return;
             }

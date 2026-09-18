@@ -1,6 +1,9 @@
 package com.alchemist.deepexplore.coding.application;
 
 import com.alchemist.deepexplore.coding.config.CodingProperties;
+import com.alchemist.deepexplore.coding.application.editing.TextEditOperation;
+import com.alchemist.deepexplore.coding.application.editing.TextEditPlan;
+import com.alchemist.deepexplore.coding.application.editing.TextEditPlanner;
 import com.alchemist.deepexplore.workspace.application.WorkspaceOperationException;
 import com.alchemist.deepexplore.workspace.application.command.WorkspaceCommandService;
 import com.alchemist.deepexplore.workspace.application.lifecycle.WorkspaceLifecycleService;
@@ -11,13 +14,13 @@ import com.alchemist.deepexplore.workspace.domain.WorkspaceEntry;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceFile;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceStatus;
 import com.alchemist.deepexplore.workspace.port.WorkspaceStorage;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -25,16 +28,14 @@ public class CodingWorkspaceService {
 
     private static final int MAX_DIRECTORY_DEPTH = 5;
     private static final int MAX_COMMAND_CHARACTERS = 8_000;
-    private static final Pattern PATCH_PATH = Pattern.compile(
-            "^(---|\\+\\+\\+)\\s+([^\\t\\r\\n]+)",
-            Pattern.MULTILINE
-    );
-
+    private static final Set<String> IGNORED_DIRECTORIES =
+            Set.of("node_modules", ".git");
     private final WorkspaceQueryService workspaces;
     private final WorkspaceLifecycleService lifecycle;
     private final WorkspaceStorage storage;
     private final WorkspaceCommandService commands;
     private final WorkspaceOperationCoordinator operations;
+    private final TextEditPlanner editPlanner;
     private final CodingProperties properties;
 
     public CodingWorkspaceService(
@@ -43,6 +44,7 @@ public class CodingWorkspaceService {
             WorkspaceStorage storage,
             WorkspaceCommandService commands,
             WorkspaceOperationCoordinator operations,
+            TextEditPlanner editPlanner,
             CodingProperties properties
     ) {
         this.workspaces = workspaces;
@@ -50,6 +52,7 @@ public class CodingWorkspaceService {
         this.storage = storage;
         this.commands = commands;
         this.operations = operations;
+        this.editPlanner = editPlanner;
         this.properties = properties;
     }
 
@@ -207,7 +210,7 @@ public class CodingWorkspaceService {
             String expectedRevision
     ) {
         requireWorkspace(workspaceId);
-        return operations.withLock(workspaceId, () -> {
+        return operations.withWriteLock(workspaceId, () -> {
             boolean exists = true;
             try {
                 storage.read(workspaceId, path);
@@ -242,41 +245,57 @@ public class CodingWorkspaceService {
         });
     }
 
-    public CodingToolResult applyPatch(String workspaceId, String patch) {
+    public CodingToolResult editFile(
+            String workspaceId,
+            String path,
+            String expectedRevision,
+            List<TextEditOperation> edits
+    ) {
         requireWorkspace(workspaceId);
-        List<String> changedPaths = validatePatch(patch);
-        return operations.withLock(workspaceId, () -> {
-            String patchPath = ".deep-explore-patch-"
-                    + UUID.randomUUID() + ".diff";
-            storage.write(workspaceId, patchPath, patch);
-            try {
-                String patchArgument = shellQuote(patchPath);
-                CommandResult result = executeInRunningWorkspace(
-                        workspaceId,
-                        "git apply --check --whitespace=nowarn -- "
-                                + patchArgument
-                                + " && git apply --whitespace=nowarn -- "
-                                + patchArgument,
-                        ""
+        if (expectedRevision == null || expectedRevision.isBlank()) {
+            throw new CodingToolException(
+                    "EXPECTED_REVISION_REQUIRED",
+                    "Read the file before editing it"
+            );
+        }
+        return operations.withWriteLock(workspaceId, () -> {
+            WorkspaceFile current = storage.read(workspaceId, path);
+            if (!MessageDigest.isEqual(
+                    current.revision().getBytes(StandardCharsets.US_ASCII),
+                    expectedRevision.getBytes(StandardCharsets.US_ASCII)
+            )) {
+                throw new CodingToolException(
+                        "WORKSPACE_FILE_CHANGED",
+                        "The file changed after it was read; read it again before editing",
+                        Map.of(
+                                "path", current.path(),
+                                "currentRevision", current.revision()
+                        )
                 );
-                if (result.exitCode() == null || result.exitCode() != 0) {
-                    throw commandFailure(
-                            "PATCH_APPLY_FAILED",
-                            "Patch could not be applied",
-                            result
-                    );
-                }
-                return CodingToolResult.success(
-                        "Applied patch to " + changedPaths.size() + " file(s)",
-                        Map.of("changedFiles", changedPaths)
-                );
-            } finally {
-                try {
-                    storage.deleteEntry(workspaceId, patchPath, false);
-                } catch (WorkspaceOperationException ignored) {
-                    // The patch result is more important than temporary cleanup.
-                }
             }
+            TextEditPlan plan = editPlanner.plan(
+                    current.content(),
+                    edits,
+                    properties.maxEditOperations(),
+                    properties.maxEditInputCharacters()
+            );
+            WorkspaceFile written = storage.write(
+                    workspaceId,
+                    path,
+                    plan.content(),
+                    current.revision()
+            );
+            return CodingToolResult.success(
+                    "Edited " + written.path(),
+                    Map.of(
+                            "path", written.path(),
+                            "revision", written.revision(),
+                            "operations", plan.operations(),
+                            "replacements", plan.replacements(),
+                            "beforeLines", plan.beforeLines(),
+                            "afterLines", plan.afterLines()
+                    )
+            );
         });
     }
 
@@ -351,6 +370,11 @@ public class CodingWorkspaceService {
             if (entries.size() >= limit) {
                 return;
             }
+            // node_modules / .git 会把有限的条目配额吃光，真正的源码反而看不到
+            if (entry.type() == WorkspaceEntry.Type.DIRECTORY
+                    && IGNORED_DIRECTORIES.contains(entry.name())) {
+                continue;
+            }
             entries.add(
                     entry.type() == WorkspaceEntry.Type.DIRECTORY
                             ? entry.path() + "/"
@@ -386,47 +410,6 @@ public class CodingWorkspaceService {
 
     private void requireWorkspace(String workspaceId) {
         workspaces.get(workspaceId);
-    }
-
-    private static List<String> validatePatch(String patch) {
-        if (patch == null || patch.isBlank()) {
-            throw new CodingToolException(
-                    "INVALID_PATCH",
-                    "Patch must not be blank"
-            );
-        }
-        List<String> changedPaths = new ArrayList<>();
-        Matcher matcher = PATCH_PATH.matcher(patch);
-        while (matcher.find()) {
-            String raw = matcher.group(2).strip();
-            if ("/dev/null".equals(raw)) {
-                continue;
-            }
-            String path = raw.startsWith("a/") || raw.startsWith("b/")
-                    ? raw.substring(2)
-                    : raw;
-            if (path.isBlank()
-                    || path.startsWith("/")
-                    || path.startsWith("../")
-                    || path.contains("/../")
-                    || path.startsWith(".deep-explore-patch-")
-                    || path.indexOf('\\') >= 0) {
-                throw new CodingToolException(
-                        "INVALID_PATCH_PATH",
-                        "Patch paths must stay within the workspace"
-                );
-            }
-            if (!changedPaths.contains(path)) {
-                changedPaths.add(path);
-            }
-        }
-        if (changedPaths.isEmpty()) {
-            throw new CodingToolException(
-                    "INVALID_PATCH",
-                    "Patch does not contain a target file"
-            );
-        }
-        return List.copyOf(changedPaths);
     }
 
     private static CodingToolException commandFailure(

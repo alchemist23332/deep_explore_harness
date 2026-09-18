@@ -171,8 +171,8 @@ expiring Preview Gateway instead of exposing Docker host ports directly.
 Runs with a `workspaceId` receive ten workspace-scoped tools:
 
 ```text
-WorkspaceStorage        -> list_files, read_file, write_file
-WorkspaceCommandService -> grep_search, apply_patch, run_command
+WorkspaceStorage        -> list_files, read_file, write_file, edit_file
+WorkspaceCommandService -> grep_search, run_command
 PreviewApplication      -> start_preview, preview_status, preview_logs,
                            stop_preview
 ```

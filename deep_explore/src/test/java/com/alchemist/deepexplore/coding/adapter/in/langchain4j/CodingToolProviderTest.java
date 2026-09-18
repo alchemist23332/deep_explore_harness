@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolEffect;
 import com.alchemist.deepexplore.coding.application.CodingWorkspaceService;
 import com.alchemist.deepexplore.coding.config.CodingProperties;
 import com.alchemist.deepexplore.workspace.application.preview.PreviewApplicationService;
@@ -20,10 +21,10 @@ class CodingToolProviderTest {
                 new AgentInvocationContextRegistry();
         CodingProperties properties = new CodingProperties(
                         true,
-                        20,
-                        10,
-                        5,
+                        512,
                         12_000,
+                        32,
+                        200_000,
                         12_000,
                         200,
                         20_000
@@ -45,9 +46,10 @@ class CodingToolProviderTest {
 
         contexts.bind("run-1", "conversation-1", "workspace-1");
 
-        assertThat(provider.provideTools(
+        var providedTools = provider.provideTools(
                 request("run-1")
-        ).aiServiceTools())
+        ).aiServiceTools();
+        assertThat(providedTools)
                 .hasSize(10)
                 .extracting(tool -> tool.toolSpecification().name())
                 .containsExactlyInAnyOrder(
@@ -55,13 +57,37 @@ class CodingToolProviderTest {
                         "read_file",
                         "grep_search",
                         "write_file",
-                        "apply_patch",
+                        "edit_file",
                         "run_command",
                         "start_preview",
                         "preview_status",
                         "preview_logs",
                         "stop_preview"
                 );
+        assertThat(providedTools).filteredOn(tool ->
+                tool.toolSpecification().name().equals("edit_file")
+        ).singleElement().satisfies(tool -> assertThat(
+                tool.toolSpecification().toJson()
+        ).contains(
+                "expectedRevision",
+                "edits",
+                "oldText",
+                "newText",
+                "replaceAll"
+        ));
+        assertThat(provider.toolPolicies()).hasSize(10);
+        assertThat(provider.toolPolicies().get("read_file").effect())
+                .isEqualTo(ToolEffect.READ_ONLY);
+        assertThat(provider.toolPolicies().get("write_file").effect())
+                .isEqualTo(ToolEffect.WORKSPACE_MUTATION);
+        assertThat(provider.toolPolicies().get("edit_file").effect())
+                .isEqualTo(ToolEffect.WORKSPACE_MUTATION);
+        assertThat(provider.toolPolicies()).doesNotContainKey("apply_patch");
+        assertThat(provider.toolDescriptors())
+                .extracting(descriptor -> descriptor.name())
+                .contains("edit_file", "apply_patch");
+        assertThat(provider.toolPolicies().get("run_command").effect())
+                .isEqualTo(ToolEffect.EXCLUSIVE);
     }
 
     private static ToolProviderRequest request(String conversationId) {

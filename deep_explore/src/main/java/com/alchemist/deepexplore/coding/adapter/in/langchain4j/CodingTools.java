@@ -4,6 +4,7 @@ import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistr
 import com.alchemist.deepexplore.coding.application.CodingToolException;
 import com.alchemist.deepexplore.coding.application.CodingToolResult;
 import com.alchemist.deepexplore.coding.application.CodingWorkspaceService;
+import com.alchemist.deepexplore.coding.application.editing.TextEditOperation;
 import com.alchemist.deepexplore.coding.config.CodingProperties;
 import com.alchemist.deepexplore.workspace.application.WorkspaceOperationException;
 import com.alchemist.deepexplore.workspace.application.preview.PreviewApplicationService;
@@ -12,6 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolMemoryId;
+import dev.langchain4j.model.output.structured.Description;
+import java.util.List;
 import java.util.function.Function;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -61,7 +64,7 @@ public class CodingTools {
             @P(name = "limit", description = "Maximum entries to return", required = false)
             Integer limit
     ) {
-        return invoke(invocationId, Operation.READ, context ->
+        return invoke(invocationId, context ->
                 workspaces.listFiles(
                         context.workspaceId(),
                         path,
@@ -86,7 +89,7 @@ public class CodingTools {
             @P(name = "endLine", description = "1-based inclusive last line", required = false)
             Integer endLine
     ) {
-        return invoke(invocationId, Operation.READ, context ->
+        return invoke(invocationId, context ->
                 workspaces.readFile(
                         context.workspaceId(),
                         path,
@@ -114,7 +117,7 @@ public class CodingTools {
             @P(name = "limit", description = "Maximum matching lines", required = false)
             Integer limit
     ) {
-        return invoke(invocationId, Operation.READ, context ->
+        return invoke(invocationId, context ->
                 workspaces.grepSearch(
                         context.workspaceId(),
                         pattern,
@@ -142,7 +145,7 @@ public class CodingTools {
             @P(name = "expectedRevision", description = "Revision returned by read_file", required = false)
             String expectedRevision
     ) {
-        return invoke(invocationId, Operation.MUTATION, context ->
+        return invoke(invocationId, context ->
                 workspaces.writeFile(
                         context.workspaceId(),
                         path,
@@ -152,19 +155,30 @@ public class CodingTools {
     }
 
     @Tool(
-            name = "apply_patch",
-            value = "Apply a unified diff to the active workspace. Patch "
-                    + "headers must use workspace-relative a/ and b/ paths."
+            name = "edit_file",
+            value = "Make one or more exact text replacements in one existing "
+                    + "UTF-8 file. All edits are validated against the same "
+                    + "revision and applied atomically. oldText must match "
+                    + "exactly and uniquely unless replaceAll is true."
     )
-    public String applyPatch(
+    public String editFile(
             @ToolMemoryId String invocationId,
-            @P(name = "description", description = "Why this patch is needed")
+            @P(name = "description", description = "Why the file is being edited")
             String description,
-            @P(name = "patch", description = "Unified diff patch")
-            String patch
+            @P(name = "path", description = "Workspace-relative file path")
+            String path,
+            @P(name = "expectedRevision", description = "Revision returned by read_file")
+            String expectedRevision,
+            @P(name = "edits", description = "Exact replacements to apply atomically")
+            List<EditOperationInput> edits
     ) {
-        return invoke(invocationId, Operation.MUTATION, context ->
-                workspaces.applyPatch(context.workspaceId(), patch));
+        return invoke(invocationId, context ->
+                workspaces.editFile(
+                        context.workspaceId(),
+                        path,
+                        expectedRevision,
+                        toOperations(edits)
+                ));
     }
 
     @Tool(
@@ -183,7 +197,7 @@ public class CodingTools {
             @P(name = "workingDirectory", description = "Workspace-relative directory, or empty for the root; never /workspace", required = false)
             String workingDirectory
     ) {
-        return invoke(invocationId, Operation.COMMAND, context ->
+        return invoke(invocationId, context ->
                 workspaces.runCommand(
                         context.workspaceId(),
                         command,
@@ -209,7 +223,7 @@ public class CodingTools {
             @P(name = "healthPath", description = "HTTP path used for readiness checks", required = false)
             String healthPath
     ) {
-        return invoke(invocationId, Operation.COMMAND, context ->
+        return invoke(invocationId, context ->
                 CodingToolResult.success(
                         "Preview is running",
                         previews.start(
@@ -230,7 +244,7 @@ public class CodingTools {
             @P(name = "description", description = "Why preview status is being checked")
             String description
     ) {
-        return invoke(invocationId, Operation.READ, context ->
+        return invoke(invocationId, context ->
                 CodingToolResult.success(
                         "Preview status checked",
                         previews.status(context.workspaceId())
@@ -246,7 +260,7 @@ public class CodingTools {
             @P(name = "description", description = "Why preview logs are being read")
             String description
     ) {
-        return invoke(invocationId, Operation.READ, context ->
+        return invoke(invocationId, context ->
                 CodingToolResult.success(
                         "Preview logs read",
                         java.util.Map.of(
@@ -265,7 +279,7 @@ public class CodingTools {
             @P(name = "description", description = "Why the preview is being stopped")
             String description
     ) {
-        return invoke(invocationId, Operation.COMMAND, context ->
+        return invoke(invocationId, context ->
                 CodingToolResult.success(
                         "Preview stopped",
                         previews.stop(context.workspaceId())
@@ -274,7 +288,6 @@ public class CodingTools {
 
     private String invoke(
             String invocationId,
-            Operation operation,
             Function<AgentInvocationContextRegistry.Context, CodingToolResult>
                     action
     ) {
@@ -285,12 +298,13 @@ public class CodingTools {
                                     "WORKSPACE_NOT_BOUND",
                                     "No workspace is bound to this Agent run"
                             ));
-            consume(context, operation);
+            checkEmergencyFuse(context);
             return json(action.apply(context));
         } catch (CodingToolException error) {
             return json(CodingToolResult.failure(
                     error.getMessage(),
-                    error.code()
+                    error.code(),
+                    error.data()
             ));
         } catch (WorkspaceOperationException error) {
             return json(CodingToolResult.failure(
@@ -305,32 +319,19 @@ public class CodingTools {
         }
     }
 
-    private void consume(
-            AgentInvocationContextRegistry.Context context,
-            Operation operation
+    /**
+     * This is a last-resort runaway fuse, not the normal Agent work budget.
+     * All attempts count and the check happens before any tool side effect.
+     */
+    private void checkEmergencyFuse(
+            AgentInvocationContextRegistry.Context context
     ) {
         requireWithinLimit(
-                context.increment("tools"),
-                properties.maxToolCalls(),
-                "TOOL_BUDGET_EXCEEDED",
-                "Coding tool call budget exceeded"
+                context.increment("codingToolAttempts"),
+                properties.emergencyMaxToolCalls(),
+                "EMERGENCY_TOOL_CALL_LIMIT_EXCEEDED",
+                "Coding tool emergency call limit exceeded"
         );
-        if (operation == Operation.MUTATION) {
-            requireWithinLimit(
-                    context.increment("mutations"),
-                    properties.maxMutationCalls(),
-                    "MUTATION_BUDGET_EXCEEDED",
-                    "Coding mutation budget exceeded"
-            );
-        }
-        if (operation == Operation.COMMAND) {
-            requireWithinLimit(
-                    context.increment("commands"),
-                    properties.maxCommandCalls(),
-                    "COMMAND_BUDGET_EXCEEDED",
-                    "Coding command budget exceeded"
-            );
-        }
     }
 
     private static void requireWithinLimit(
@@ -355,9 +356,30 @@ public class CodingTools {
         }
     }
 
-    private enum Operation {
-        READ,
-        MUTATION,
-        COMMAND
+    private static List<TextEditOperation> toOperations(
+            List<EditOperationInput> edits
+    ) {
+        if (edits == null) {
+            return null;
+        }
+        return edits.stream()
+                .map(edit -> edit == null
+                        ? null
+                        : new TextEditOperation(
+                                edit.oldText(),
+                                edit.newText(),
+                                Boolean.TRUE.equals(edit.replaceAll())
+                        ))
+                .toList();
+    }
+
+    public record EditOperationInput(
+            @Description("Exact text copied from the latest read_file output, without line-number prefixes")
+            String oldText,
+            @Description("Replacement text; use an empty string to delete oldText")
+            String newText,
+            @Description("True only when every occurrence should be replaced; otherwise false")
+            Boolean replaceAll
+    ) {
     }
 }

@@ -3,9 +3,12 @@ package com.alchemist.deepexplore.coding.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.alchemist.deepexplore.coding.application.editing.TextEditOperation;
+import com.alchemist.deepexplore.coding.application.editing.TextEditPlanner;
 import com.alchemist.deepexplore.coding.config.CodingProperties;
 import com.alchemist.deepexplore.workspace.application.command.WorkspaceCommandService;
 import com.alchemist.deepexplore.workspace.application.lifecycle.WorkspaceLifecycleService;
@@ -18,6 +21,7 @@ import com.alchemist.deepexplore.workspace.domain.WorkspaceFile;
 import com.alchemist.deepexplore.workspace.domain.WorkspaceStatus;
 import com.alchemist.deepexplore.workspace.port.WorkspaceStorage;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +50,7 @@ class CodingWorkspaceServiceTest {
                 storage,
                 commands,
                 new WorkspaceOperationCoordinator(),
+                new TextEditPlanner(),
                 properties()
         );
     }
@@ -167,19 +172,118 @@ class CodingWorkspaceServiceTest {
     }
 
     @Test
-    void rejectsPatchPathsOutsideWorkspace() {
-        String patch = """
-                --- a/src/App.java
-                +++ ../../outside.java
-                @@ -1 +1 @@
-                -old
-                +new
-                """;
+    void editsFileAtomicallyAgainstExpectedRevision() {
+        WorkspaceFile existing = new WorkspaceFile(
+                "src/App.java",
+                "class App {\n    int oldValue = 1;\n}\n",
+                38,
+                Instant.EPOCH,
+                "revision-1"
+        );
+        WorkspaceFile updated = new WorkspaceFile(
+                "src/App.java",
+                "class App {\n    int newValue = 2;\n}\n",
+                38,
+                Instant.EPOCH,
+                "revision-2"
+        );
+        when(storage.read(WORKSPACE_ID, "src/App.java"))
+                .thenReturn(existing);
+        when(storage.write(
+                WORKSPACE_ID,
+                "src/App.java",
+                updated.content(),
+                "revision-1"
+        )).thenReturn(updated);
 
-        assertThatThrownBy(() -> service.applyPatch(WORKSPACE_ID, patch))
+        CodingToolResult result = service.editFile(
+                WORKSPACE_ID,
+                "src/App.java",
+                "revision-1",
+                List.of(new TextEditOperation(
+                        "int oldValue = 1;",
+                        "int newValue = 2;",
+                        false
+                ))
+        );
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.data()).asInstanceOf(
+                org.assertj.core.api.InstanceOfAssertFactories.MAP
+        ).containsEntry("operations", 1)
+                .containsEntry("replacements", 1)
+                .containsEntry("revision", "revision-2");
+        verify(storage).write(
+                WORKSPACE_ID,
+                "src/App.java",
+                updated.content(),
+                "revision-1"
+        );
+    }
+
+    @Test
+    void doesNotWriteWhenAnyEditCannotBePlanned() {
+        WorkspaceFile existing = new WorkspaceFile(
+                "src/App.java",
+                "old value",
+                9,
+                Instant.EPOCH,
+                "revision-1"
+        );
+        when(storage.read(WORKSPACE_ID, "src/App.java"))
+                .thenReturn(existing);
+
+        assertThatThrownBy(() -> service.editFile(
+                WORKSPACE_ID,
+                "src/App.java",
+                "revision-1",
+                List.of(
+                        new TextEditOperation("old", "new", false),
+                        new TextEditOperation("missing", "replacement", false)
+                )
+        ))
                 .isInstanceOf(CodingToolException.class)
                 .extracting(error -> ((CodingToolException) error).code())
-                .isEqualTo("INVALID_PATCH_PATH");
+                .isEqualTo("EDIT_TARGET_NOT_FOUND");
+        verify(storage, never()).write(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any()
+        );
+    }
+
+    @Test
+    void rejectsEditWhenReadRevisionIsStale() {
+        WorkspaceFile existing = new WorkspaceFile(
+                "src/App.java",
+                "current value",
+                13,
+                Instant.EPOCH,
+                "revision-2"
+        );
+        when(storage.read(WORKSPACE_ID, "src/App.java"))
+                .thenReturn(existing);
+
+        assertThatThrownBy(() -> service.editFile(
+                WORKSPACE_ID,
+                "src/App.java",
+                "revision-1",
+                List.of(new TextEditOperation(
+                        "current",
+                        "updated",
+                        false
+                ))
+        ))
+                .isInstanceOf(CodingToolException.class)
+                .extracting(error -> ((CodingToolException) error).code())
+                .isEqualTo("WORKSPACE_FILE_CHANGED");
+        verify(storage, never()).write(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any()
+        );
     }
 
     @Test
@@ -225,10 +329,10 @@ class CodingWorkspaceServiceTest {
     private static CodingProperties properties() {
         return new CodingProperties(
                 true,
-                20,
-                10,
-                5,
+                512,
                 12_000,
+                32,
+                200_000,
                 12_000,
                 200,
                 20_000

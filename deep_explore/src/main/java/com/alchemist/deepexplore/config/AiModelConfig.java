@@ -8,14 +8,18 @@ import com.alchemist.deepexplore.agent.adapter.langchain4j.memory.LangChain4jMem
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.PromptContext;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.prompt.SystemPromptRenderer;
 import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.CompositeToolProvider;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.BarrierAwareStreamingChatModel;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolBatchRegistry;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolExecutionProperties;
+import com.alchemist.deepexplore.agent.adapter.langchain4j.tool.execution.ToolSchedulingErrorHandler;
 import com.alchemist.deepexplore.agent.application.AgentInvocationContextRegistry;
 import com.alchemist.deepexplore.agent.domain.AgentProfile;
 import com.alchemist.deepexplore.agent.domain.AgentProfileDefinition;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.AiServices;
+import java.util.concurrent.Executor;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -51,25 +55,35 @@ public class AiModelConfig {
     }
 
     @Bean("fastStreamingChatModel")
-    StreamingChatModel fastStreamingChatModel(AiModelProperties properties) {
-        return buildModel(
+    StreamingChatModel fastStreamingChatModel(
+            AiModelProperties properties,
+            ToolBatchRegistry toolBatches,
+            ToolExecutionProperties toolExecutionProperties
+    ) {
+        StreamingChatModel model = buildModel(
                 properties,
                 properties.modelName(),
                 properties.maxCompletionTokens(),
                 properties.reasoningEffort(),
                 properties.fastThinking()
         );
+        return scheduledModel(model, toolBatches, toolExecutionProperties);
     }
 
     @Bean("deepStreamingChatModel")
-    StreamingChatModel deepStreamingChatModel(AiModelProperties properties) {
-        return buildModel(
+    StreamingChatModel deepStreamingChatModel(
+            AiModelProperties properties,
+            ToolBatchRegistry toolBatches,
+            ToolExecutionProperties toolExecutionProperties
+    ) {
+        StreamingChatModel model = buildModel(
                 properties,
                 properties.resolvedDeepModelName(),
                 properties.deepMaxCompletionTokens(),
                 properties.deepReasoningEffort(),
                 properties.deepThinking()
         );
+        return scheduledModel(model, toolBatches, toolExecutionProperties);
     }
 
     @Bean("fastStreamingAssistant")
@@ -79,8 +93,10 @@ public class AiModelConfig {
             SystemPromptRenderer systemPromptRenderer,
             CompositeToolProvider toolProvider,
             AgentInvocationContextRegistry invocationContexts,
-            @Value("${ai.agent.max-tool-calling-round-trips:3}")
-            int maxToolCallingRoundTrips
+            AgentLoopProperties loopProperties,
+            ToolExecutionProperties toolExecutionProperties,
+            ToolSchedulingErrorHandler toolErrorHandler,
+            @Qualifier("toolExecutionExecutor") Executor toolExecutionExecutor
     ) {
         return buildAssistant(
                 model,
@@ -88,8 +104,13 @@ public class AiModelConfig {
                 systemPromptRenderer,
                 toolProvider,
                 invocationContexts,
-                maxToolCallingRoundTrips,
-                AgentProfile.FAST.id()
+                loopProperties.maxToolCallingRoundTrips(
+                        AgentProfile.FAST.id()
+                ),
+                AgentProfile.FAST.id(),
+                toolExecutionProperties,
+                toolErrorHandler,
+                toolExecutionExecutor
         );
     }
 
@@ -100,8 +121,10 @@ public class AiModelConfig {
             SystemPromptRenderer systemPromptRenderer,
             CompositeToolProvider toolProvider,
             AgentInvocationContextRegistry invocationContexts,
-            @Value("${ai.agent.max-tool-calling-round-trips:3}")
-            int maxToolCallingRoundTrips
+            AgentLoopProperties loopProperties,
+            ToolExecutionProperties toolExecutionProperties,
+            ToolSchedulingErrorHandler toolErrorHandler,
+            @Qualifier("toolExecutionExecutor") Executor toolExecutionExecutor
     ) {
         return buildAssistant(
                 model,
@@ -109,8 +132,13 @@ public class AiModelConfig {
                 systemPromptRenderer,
                 toolProvider,
                 invocationContexts,
-                maxToolCallingRoundTrips,
-                AgentProfile.DEEP.id()
+                loopProperties.maxToolCallingRoundTrips(
+                        AgentProfile.DEEP.id()
+                ),
+                AgentProfile.DEEP.id(),
+                toolExecutionProperties,
+                toolErrorHandler,
+                toolExecutionExecutor
         );
     }
 
@@ -145,7 +173,10 @@ public class AiModelConfig {
             CompositeToolProvider toolProvider,
             AgentInvocationContextRegistry invocationContexts,
             int maxToolCallingRoundTrips,
-            String profileId
+            String profileId,
+            ToolExecutionProperties toolExecutionProperties,
+            ToolSchedulingErrorHandler toolErrorHandler,
+            Executor toolExecutionExecutor
     ) {
         AiServices<StreamingAssistant> builder = AiServices.builder(
                         StreamingAssistant.class
@@ -161,9 +192,23 @@ public class AiModelConfig {
                                         )
                                 )
                         ))
+                .toolExecutionErrorHandler(toolErrorHandler)
                 .maxToolCallingRoundTrips(maxToolCallingRoundTrips)
                 .toolProvider(toolProvider);
+        if (toolExecutionProperties.barrierEnabled()) {
+            builder.executeToolsConcurrently(toolExecutionExecutor);
+        }
         return builder.build();
+    }
+
+    private static StreamingChatModel scheduledModel(
+            StreamingChatModel model,
+            ToolBatchRegistry toolBatches,
+            ToolExecutionProperties properties
+    ) {
+        return properties.barrierEnabled()
+                ? new BarrierAwareStreamingChatModel(model, toolBatches)
+                : model;
     }
 
     private StreamingChatModel buildModel(

@@ -33,15 +33,21 @@ ai:
     log-responses: ${AI_LOG_RESPONSES:false}
   agent:
     id: ${AI_AGENT_ID:assistant}
-    max-tool-calling-round-trips: ${AGENT_MAX_TOOL_CALLING_ROUND_TRIPS:24}
+    fast-max-tool-calling-round-trips: ${AGENT_FAST_MAX_TOOL_CALLING_ROUND_TRIPS:${AGENT_MAX_TOOL_CALLING_ROUND_TRIPS:24}}
+    deep-max-tool-calling-round-trips: ${AGENT_DEEP_MAX_TOOL_CALLING_ROUND_TRIPS:${AGENT_MAX_TOOL_CALLING_ROUND_TRIPS:64}}
+    tool-execution:
+      mode: ${AGENT_TOOL_EXECUTION_MODE:BARRIER}
+      max-parallelism: ${AGENT_TOOL_MAX_PARALLELISM:8}
+      max-calls-per-round: ${AGENT_TOOL_MAX_CALLS_PER_ROUND:64}
+      barrier-timeout: ${AGENT_TOOL_BARRIER_TIMEOUT:120s}
 
 tools:
   coding:
     enabled: ${CODING_TOOLS_ENABLED:true}
-    max-tool-calls: ${CODING_MAX_TOOL_CALLS:50}
-    max-mutation-calls: ${CODING_MAX_MUTATION_CALLS:10}
-    max-command-calls: ${CODING_MAX_COMMAND_CALLS:5}
+    emergency-max-tool-calls: ${CODING_EMERGENCY_MAX_TOOL_CALLS:512}
     max-read-characters: ${CODING_MAX_READ_CHARACTERS:12000}
+    max-edit-operations: ${CODING_MAX_EDIT_OPERATIONS:32}
+    max-edit-input-characters: ${CODING_MAX_EDIT_INPUT_CHARACTERS:200000}
     max-search-characters: ${CODING_MAX_SEARCH_CHARACTERS:12000}
     max-search-results: ${CODING_MAX_SEARCH_RESULTS:200}
     max-command-result-characters: ${CODING_MAX_COMMAND_RESULT_CHARACTERS:20000}

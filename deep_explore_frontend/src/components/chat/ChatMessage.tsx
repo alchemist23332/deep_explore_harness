@@ -1,6 +1,7 @@
 import {
   ActionBarPrimitive,
   AuiIf,
+  ErrorPrimitive,
   MessagePrimitive,
   useAuiState,
 } from '@assistant-ui/react'
@@ -61,7 +62,8 @@ export function AssistantMessage() {
           <MessagePrimitive.Error>
             <div className="message-error" role="alert">
               <TriangleAlert size={16} />
-              <span>生成失败，请检查服务状态后重试。</span>
+              {/* 展示后端给出的真实原因（如 TOOL_ROUND_LIMIT_EXCEEDED），不要吞掉 */}
+              <ErrorPrimitive.Message />
             </div>
           </MessagePrimitive.Error>
         </div>

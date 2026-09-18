@@ -6,6 +6,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import com.alchemist.deepexplore.workspace.application.lifecycle.WorkspaceOperationCoordinator;
@@ -17,6 +18,10 @@ import com.alchemist.deepexplore.workspace.domain.WorkspaceStatus;
 import com.alchemist.deepexplore.workspace.port.SandboxRuntime;
 import com.alchemist.deepexplore.workspace.port.WorkspaceStorage;
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -104,6 +109,106 @@ class QuiescingWorkspaceStorageTest {
 
         verify(runtime, never()).currentState(CONTAINER_ID);
         verify(delegate).read(WORKSPACE_ID, "README.md");
+    }
+
+    @Test
+    void sharesOneSandboxPauseAcrossConcurrentReads() throws Exception {
+        when(runtime.currentState(CONTAINER_ID))
+                .thenReturn(SandboxRuntime.RuntimeState.RUNNING);
+        CountDownLatch entered = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maximum = new AtomicInteger();
+        when(delegate.read(WORKSPACE_ID, "README.md")).thenAnswer(ignored -> {
+            int current = active.incrementAndGet();
+            maximum.accumulateAndGet(current, Math::max);
+            entered.countDown();
+            try {
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Concurrent reads did not overlap");
+                }
+                return file();
+            } finally {
+                active.decrementAndGet();
+            }
+        });
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(
+                    () -> storage.read(WORKSPACE_ID, "README.md")
+            );
+            var second = executor.submit(
+                    () -> storage.read(WORKSPACE_ID, "README.md")
+            );
+
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(maximum).hasValue(2);
+            verify(runtime).pause(CONTAINER_ID);
+            verify(runtime, never()).resume(CONTAINER_ID);
+
+            release.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(file());
+            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(file());
+        }
+
+        verify(runtime).resume(CONTAINER_ID);
+        verify(runtime).currentState(CONTAINER_ID);
+        verify(delegate, times(2)).read(WORKSPACE_ID, "README.md");
+    }
+
+    @Test
+    void mutationWaitsUntilActiveReadHasFinished() throws Exception {
+        when(runtime.currentState(CONTAINER_ID))
+                .thenReturn(SandboxRuntime.RuntimeState.RUNNING);
+        CountDownLatch readEntered = new CountDownLatch(1);
+        CountDownLatch releaseRead = new CountDownLatch(1);
+        when(delegate.read(WORKSPACE_ID, "README.md")).thenAnswer(ignored -> {
+            readEntered.countDown();
+            if (!releaseRead.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("Timed out waiting to release read");
+            }
+            return file();
+        });
+        when(delegate.write(
+                WORKSPACE_ID,
+                "README.md",
+                "changed",
+                "revision"
+        )).thenReturn(file());
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var read = executor.submit(
+                    () -> storage.read(WORKSPACE_ID, "README.md")
+            );
+            assertThat(readEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            var write = executor.submit(() -> storage.write(
+                    WORKSPACE_ID,
+                    "README.md",
+                    "changed",
+                    "revision"
+            ));
+
+            Thread.sleep(100);
+            verify(delegate, never()).write(
+                    WORKSPACE_ID,
+                    "README.md",
+                    "changed",
+                    "revision"
+            );
+
+            releaseRead.countDown();
+            assertThat(read.get(5, TimeUnit.SECONDS)).isEqualTo(file());
+            assertThat(write.get(5, TimeUnit.SECONDS)).isEqualTo(file());
+        }
+
+        verify(delegate).write(
+                WORKSPACE_ID,
+                "README.md",
+                "changed",
+                "revision"
+        );
+        verify(runtime, times(2)).pause(CONTAINER_ID);
+        verify(runtime, times(2)).resume(CONTAINER_ID);
     }
 
     private static Workspace workspace(String containerId) {

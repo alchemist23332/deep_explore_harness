@@ -10,6 +10,7 @@ import com.alchemist.deepexplore.workspace.port.SandboxRuntime;
 import com.alchemist.deepexplore.workspace.port.WorkspaceStorage;
 import java.io.InputStream;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Primary;
@@ -26,6 +27,8 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
     private final WorkspaceQueryService workspaces;
     private final WorkspaceOperationCoordinator operations;
     private final SandboxRuntime runtime;
+    private final ConcurrentHashMap<String, QuiescenceState> quiescence =
+            new ConcurrentHashMap<>();
 
     public QuiescingWorkspaceStorage(
             @Qualifier("localWorkspaceStorage") WorkspaceStorage delegate,
@@ -41,22 +44,32 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
 
     @Override
     public void initialize(String workspaceId) {
-        delegate.initialize(workspaceId);
+        operations.withWriteLock(workspaceId, () -> {
+            delegate.initialize(workspaceId);
+            return null;
+        });
     }
 
     @Override
     public void deleteWorkspace(String workspaceId) {
-        delegate.deleteWorkspace(workspaceId);
+        operations.withWriteLock(workspaceId, () -> {
+            delegate.deleteWorkspace(workspaceId);
+            quiescence.remove(workspaceId);
+            return null;
+        });
     }
 
     @Override
     public List<WorkspaceEntry> list(String workspaceId, String path) {
-        return access(workspaceId, () -> delegate.list(workspaceId, path));
+        return readAccess(
+                workspaceId,
+                () -> delegate.list(workspaceId, path)
+        );
     }
 
     @Override
     public List<WorkspaceTreeNode> tree(String workspaceId) {
-        return access(workspaceId, () -> delegate.tree(workspaceId));
+        return readAccess(workspaceId, () -> delegate.tree(workspaceId));
     }
 
     @Override
@@ -66,7 +79,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             String name,
             WorkspaceEntry.Type type
     ) {
-        return access(
+        return writeAccess(
                 workspaceId,
                 () -> delegate.create(workspaceId, parentPath, name, type)
         );
@@ -78,7 +91,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             String sourcePath,
             String targetPath
     ) {
-        return access(
+        return writeAccess(
                 workspaceId,
                 () -> delegate.move(workspaceId, sourcePath, targetPath)
         );
@@ -90,7 +103,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             String path,
             boolean recursive
     ) {
-        access(workspaceId, () -> {
+        writeAccess(workspaceId, () -> {
             delegate.deleteEntry(workspaceId, path, recursive);
             return null;
         });
@@ -98,7 +111,10 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
 
     @Override
     public WorkspaceFile read(String workspaceId, String path) {
-        return access(workspaceId, () -> delegate.read(workspaceId, path));
+        return readAccess(
+                workspaceId,
+                () -> delegate.read(workspaceId, path)
+        );
     }
 
     @Override
@@ -108,7 +124,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             String content,
             String expectedRevision
     ) {
-        return access(
+        return writeAccess(
                 workspaceId,
                 () -> delegate.write(
                         workspaceId,
@@ -126,7 +142,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             InputStream content,
             long declaredSize
     ) {
-        return access(
+        return writeAccess(
                 workspaceId,
                 () -> delegate.upload(
                         workspaceId,
@@ -143,7 +159,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             InputStream content,
             long declaredSize
     ) {
-        return access(
+        return writeAccess(
                 workspaceId,
                 () -> delegate.importZip(workspaceId, content, declaredSize)
         );
@@ -154,7 +170,7 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
             String workspaceId,
             String relativePath
     ) {
-        return access(
+        return readAccess(
                 workspaceId,
                 () -> delegate.containerWorkingDirectory(
                         workspaceId,
@@ -163,44 +179,111 @@ public class QuiescingWorkspaceStorage implements WorkspaceStorage {
         );
     }
 
-    private <T> T access(String workspaceId, Supplier<T> action) {
-        return operations.withLock(workspaceId, () -> {
-            Workspace workspace = workspaces.get(workspaceId);
-            String containerId = workspace.containerId();
-            if (containerId == null || containerId.isBlank()) {
-                return action.get();
+    private <T> T readAccess(String workspaceId, Supplier<T> action) {
+        return operations.withReadLock(
+                workspaceId,
+                () -> quiescedAccess(workspaceId, action)
+        );
+    }
+
+    private <T> T writeAccess(String workspaceId, Supplier<T> action) {
+        return operations.withWriteLock(
+                workspaceId,
+                () -> quiescedAccess(workspaceId, action)
+        );
+    }
+
+    private <T> T quiescedAccess(String workspaceId, Supplier<T> action) {
+        Workspace workspace = workspaces.get(workspaceId);
+        String containerId = workspace.containerId();
+        if (containerId == null || containerId.isBlank()) {
+            return action.get();
+        }
+
+        QuiescenceState state = quiescence.computeIfAbsent(
+                workspaceId,
+                ignored -> new QuiescenceState()
+        );
+        enterQuiescence(state, containerId);
+        Throwable failure = null;
+        try {
+            return action.get();
+        } catch (RuntimeException | Error error) {
+            failure = error;
+            throw error;
+        } finally {
+            leaveQuiescence(state, failure);
+        }
+    }
+
+    private void enterQuiescence(
+            QuiescenceState quiescenceState,
+            String containerId
+    ) {
+        synchronized (quiescenceState) {
+            if (quiescenceState.users > 0) {
+                if (!containerId.equals(quiescenceState.containerId)) {
+                    throw new WorkspaceOperationException(
+                            "WORKSPACE_RUNTIME_CHANGED",
+                            "Workspace runtime changed during file access"
+                    );
+                }
+                quiescenceState.users++;
+                return;
             }
 
-            SandboxRuntime.RuntimeState state = runtime.currentState(containerId);
-            if (state == SandboxRuntime.RuntimeState.UNAVAILABLE) {
+            SandboxRuntime.RuntimeState runtimeState =
+                    runtime.currentState(containerId);
+            if (runtimeState == SandboxRuntime.RuntimeState.UNAVAILABLE) {
                 throw new WorkspaceOperationException(
                         "DOCKER_UNAVAILABLE",
                         "Workspace files cannot be accessed safely while "
                                 + "the sandbox state is unavailable"
                 );
             }
-            if (state != SandboxRuntime.RuntimeState.RUNNING) {
-                return action.get();
+            boolean resumeWhenIdle =
+                    runtimeState == SandboxRuntime.RuntimeState.RUNNING;
+            if (resumeWhenIdle) {
+                runtime.pause(containerId);
             }
+            quiescenceState.containerId = containerId;
+            quiescenceState.resumeWhenIdle = resumeWhenIdle;
+            quiescenceState.users = 1;
+        }
+    }
 
-            runtime.pause(containerId);
-            Throwable failure = null;
+    private void leaveQuiescence(
+            QuiescenceState quiescenceState,
+            Throwable failure
+    ) {
+        synchronized (quiescenceState) {
+            quiescenceState.users--;
+            if (quiescenceState.users > 0) {
+                return;
+            }
+            String containerId = quiescenceState.containerId;
+            boolean resume = quiescenceState.resumeWhenIdle;
+            quiescenceState.containerId = null;
+            quiescenceState.resumeWhenIdle = false;
+            if (!resume) {
+                return;
+            }
             try {
-                return action.get();
-            } catch (RuntimeException | Error error) {
-                failure = error;
-                throw error;
-            } finally {
-                try {
-                    runtime.resume(containerId);
-                } catch (RuntimeException resumeError) {
-                    if (failure != null) {
-                        failure.addSuppressed(resumeError);
-                    } else {
-                        throw resumeError;
-                    }
+                runtime.resume(containerId);
+            } catch (RuntimeException resumeError) {
+                if (failure != null) {
+                    failure.addSuppressed(resumeError);
+                } else {
+                    throw resumeError;
                 }
             }
-        });
+        }
+    }
+
+    private static final class QuiescenceState {
+
+        private int users;
+        private String containerId;
+        private boolean resumeWhenIdle;
     }
 }

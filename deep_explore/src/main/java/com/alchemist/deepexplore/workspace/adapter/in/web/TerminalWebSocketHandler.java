@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
@@ -17,6 +19,9 @@ import reactor.core.publisher.Mono;
 
 @Component
 public class TerminalWebSocketHandler implements WebSocketHandler {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(TerminalWebSocketHandler.class);
 
     private final TerminalApplicationService terminals;
     private final ObjectMapper objectMapper;
@@ -70,12 +75,20 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
 
         Mono<Void> sender = webSocket.send(outbound);
         Mono<Void> receiver = webSocket.receive()
-                .concatMap(message -> blocking.mono(
-                        BlockingExecution.Kind.DOCKER,
-                        () -> {
-                            handleMessage(terminal, message);
-                            return true;
-                        }
+                .concatMap(message -> {
+                    TerminalClientFrame frame = snapshot(message);
+                    return blocking.mono(
+                            BlockingExecution.Kind.DOCKER,
+                            () -> {
+                                handleMessage(terminal, frame);
+                                return true;
+                            }
+                    );
+                })
+                .doOnError(error -> log.warn(
+                        "Terminal WebSocket receive failed for session {}",
+                        terminal.id(),
+                        error
                 ))
                 .then();
 
@@ -86,17 +99,15 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
 
     private void handleMessage(
             TerminalConnection terminal,
-            WebSocketMessage message
+            TerminalClientFrame message
     ) {
         try {
-            if (message.getType() == WebSocketMessage.Type.BINARY) {
-                byte[] data = new byte[message.getPayload().readableByteCount()];
-                message.getPayload().read(data);
-                terminal.input(data);
+            if (message.binary() != null) {
+                terminal.input(message.binary());
                 return;
             }
             TerminalClientMessage clientMessage = objectMapper.readValue(
-                    message.getPayloadAsText(),
+                    message.text(),
                     TerminalClientMessage.class
             );
             switch (clientMessage.type()) {
@@ -122,6 +133,22 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
                     error
             );
         }
+    }
+
+    /**
+     * Inbound WebSocket message buffers are pooled and only valid for the
+     * duration of {@code onNext}. Extract the payload eagerly on the event
+     * loop; the blocking pool thread must not touch the Netty buffer later
+     * (it would hit {@code IllegalReferenceCountException: refCnt: 0}).
+     */
+    private static TerminalClientFrame snapshot(WebSocketMessage message) {
+        if (message.getType() == WebSocketMessage.Type.BINARY) {
+            var payload = message.getPayload();
+            byte[] data = new byte[payload.readableByteCount()];
+            payload.read(data);
+            return new TerminalClientFrame(null, data);
+        }
+        return new TerminalClientFrame(message.getPayloadAsText(), null);
     }
 
     private String json(Object value) {
@@ -156,6 +183,9 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
         return error.getMessage() == null
                 ? "Terminal session failed"
                 : error.getMessage();
+    }
+
+    private record TerminalClientFrame(String text, byte[] binary) {
     }
 
     private record TerminalClientMessage(

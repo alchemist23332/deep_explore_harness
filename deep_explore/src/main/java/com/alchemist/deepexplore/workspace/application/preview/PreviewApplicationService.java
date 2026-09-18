@@ -53,7 +53,7 @@ public class PreviewApplicationService {
         requireEnabled();
         validateCommand(command);
         String path = normalizeHealthPath(healthPath);
-        return operations.withLock(workspaceId, () -> {
+        return operations.withWriteLock(workspaceId, () -> {
             Workspace workspace = ensurePreviewReadyWorkspace(workspaceId);
             String containerDirectory = storage.containerWorkingDirectory(
                     workspaceId,
@@ -111,38 +111,40 @@ public class PreviewApplicationService {
     }
 
     public PreviewView status(String workspaceId) {
-        Workspace workspace = workspaces.get(workspaceId);
-        if (workspace.status() != WorkspaceStatus.RUNNING
-                || workspace.containerId() == null) {
-            return stopped();
-        }
-        SandboxPreviewRuntime.ProcessState state = runtime.state(
-                workspace.containerId()
-        );
-        if (state == SandboxPreviewRuntime.ProcessState.STOPPED) {
-            return stopped();
-        }
-        SandboxPreviewRuntime.PreviewAddress address = runtime.address(
-                workspace.containerId()
-        );
-        String logs = runtime.logs(
-                workspace.containerId(),
-                properties.maxLogCharacters()
-        );
-        if (state != SandboxPreviewRuntime.ProcessState.RUNNING) {
-            return view(PreviewStatus.FAILED, address, logs);
-        }
-        PreviewStatus status = probe.isHealthy(
-                address.url(),
-                properties.healthTimeout()
-        )
-                ? PreviewStatus.RUNNING
-                : PreviewStatus.STARTING;
-        return view(status, address, logs);
+        return operations.withReadLock(workspaceId, () -> {
+            Workspace workspace = workspaces.get(workspaceId);
+            if (workspace.status() != WorkspaceStatus.RUNNING
+                    || workspace.containerId() == null) {
+                return stopped();
+            }
+            SandboxPreviewRuntime.ProcessState state = runtime.state(
+                    workspace.containerId()
+            );
+            if (state == SandboxPreviewRuntime.ProcessState.STOPPED) {
+                return stopped();
+            }
+            SandboxPreviewRuntime.PreviewAddress address = runtime.address(
+                    workspace.containerId()
+            );
+            String logs = runtime.logs(
+                    workspace.containerId(),
+                    properties.maxLogCharacters()
+            );
+            if (state != SandboxPreviewRuntime.ProcessState.RUNNING) {
+                return view(PreviewStatus.FAILED, address, logs);
+            }
+            PreviewStatus status = probe.isHealthy(
+                    address.url(),
+                    properties.healthTimeout()
+            )
+                    ? PreviewStatus.RUNNING
+                    : PreviewStatus.STARTING;
+            return view(status, address, logs);
+        });
     }
 
     public PreviewView stop(String workspaceId) {
-        return operations.withLock(workspaceId, () -> {
+        return operations.withWriteLock(workspaceId, () -> {
             Workspace workspace = workspaces.get(workspaceId);
             runtime.stop(workspace.containerId());
             return stopped();
@@ -150,11 +152,13 @@ public class PreviewApplicationService {
     }
 
     public String logs(String workspaceId) {
-        Workspace workspace = workspaces.get(workspaceId);
-        return runtime.logs(
-                workspace.containerId(),
-                properties.maxLogCharacters()
-        );
+        return operations.withReadLock(workspaceId, () -> {
+            Workspace workspace = workspaces.get(workspaceId);
+            return runtime.logs(
+                    workspace.containerId(),
+                    properties.maxLogCharacters()
+            );
+        });
     }
 
     private Workspace ensurePreviewReadyWorkspace(String workspaceId) {

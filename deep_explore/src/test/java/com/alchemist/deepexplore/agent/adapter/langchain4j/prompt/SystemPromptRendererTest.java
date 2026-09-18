@@ -77,7 +77,8 @@ class SystemPromptRendererTest {
         assertThat(coding)
                 .contains("<coding_workspace version=\"1\">")
                 .contains("run_command")
-                .contains("apply_patch")
+                .contains("edit_file")
+                .doesNotContain("apply_patch")
                 .contains("start_preview")
                 .contains("0.0.0.0:3000");
     }
